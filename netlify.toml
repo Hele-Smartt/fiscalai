@@ -3,7 +3,7 @@
   publish   = "dist"
   functions = "netlify/functions"
 
-# Redireciona todas as rotas para o index.html (SPA)
+# SPA redirect
 [[redirects]]
   from   = "/*"
   to     = "/index.html"
@@ -16,9 +16,8 @@
     X-Frame-Options        = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
-    Permissions-Policy     = "camera=(), microphone=(), geolocation=()"
 
-# Cache longo para assets estáticos gerados pelo Vite (têm hash no nome)
+# Cache longo para assets com hash
 [[headers]]
   for = "/assets/*"
   [headers.values]

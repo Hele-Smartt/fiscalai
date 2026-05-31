@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useAuth } from "./lib/AuthContext";
+import Login from "./pages/Login";
+import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
 
 // ─── PALETTE & TOKENS ───────────────────────────────────────────────────────
 const CSS = `
@@ -1673,7 +1676,7 @@ const TITLES = {
 };
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
-export default function App() {
+function AppLegacy() {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
 
@@ -1732,6 +1735,142 @@ export default function App() {
 
           <div className="content">
             <Page key={page} />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── APP COM AUTH + BANCO ────────────────────────────────────────────────────
+// Sobrescreve o export default acima — este é o real com Supabase integrado
+export { App as default }
+
+function App() {
+  const { user, perfil, empresa, loading, logout } = useAuth();
+  const [page, setPage]         = useState("dashboard");
+  const [collapsed, setCollapsed] = useState(false);
+  const [dbData, setDbData]     = useState({});
+  const [dbLoading, setDbLoading] = useState(false);
+
+  // Carrega dados reais do banco quando a empresa estiver disponível
+  const carregarDados = useCallback(async () => {
+    if (!empresa?.id) return;
+    setDbLoading(true);
+    try {
+      const resumo = await DashboardDB.resumo(empresa.id);
+      setDbData(resumo);
+    } catch(e) { console.error(e); }
+    setDbLoading(false);
+  }, [empresa?.id]);
+
+  useEffect(() => { carregarDados(); }, [carregarDados]);
+
+  // Passa empresa e dados reais para as páginas via props
+  const pageProps = { empresa, empresaId: empresa?.id, dbData, recarregar: carregarDados };
+  const PAGES = {
+    dashboard:  Dashboard,
+    financeiro: Financeiro,
+    tributario: Tributario,
+    creditos:   Creditos,
+    ia:         IAChat,
+    estrategico: Estrategico,
+    relatorios: Relatorios,
+    config:     Configuracoes,
+  };
+  const Page = PAGES[page] || Dashboard;
+
+  // Iniciais do nome para avatar
+  const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';
+
+  if (loading) return (
+    <>
+      <style>{CSS}</style>
+      <div style={{ height:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'var(--bg)', flexDirection:'column', gap:16 }}>
+        <div className="logo-icon" style={{ width:48, height:48, borderRadius:14, background:'linear-gradient(135deg,#00D4A0,#0090FF)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:24 }}>⚡</div>
+        <div style={{ color:'var(--text3)', fontSize:13 }}>Carregando...</div>
+      </div>
+    </>
+  );
+
+  if (!user) return <Login />;
+
+  return (
+    <>
+      <style>{CSS}</style>
+      <div className="app">
+        <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+          <div className="sidebar-logo">
+            <div className="logo-icon">⚡</div>
+            {!collapsed && <div className="logo-text">Fiscal<span>AI</span></div>}
+          </div>
+
+          {NAV.map((sec, si) => (
+            <div key={si} className="sidebar-section">
+              {!collapsed && <div className="sidebar-section-label">{sec.section}</div>}
+              {sec.items.map(item => (
+                <div key={item.id}
+                  className={`nav-item ${page === item.id ? "active" : ""}`}
+                  onClick={() => setPage(item.id)}
+                  title={collapsed ? item.label : ""}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  {!collapsed && <span className="nav-label">{item.label}</span>}
+                  {!collapsed && item.badge && <span className={`nav-badge ${item.badgeType || ""}`}>{item.badge}</span>}
+                </div>
+              ))}
+            </div>
+          ))}
+
+          <div className="sidebar-bottom">
+            <div className="user-card" onClick={logout} title="Sair">
+              <div className="user-avatar">{iniciais}</div>
+              {!collapsed && (
+                <div className="user-info">
+                  <div className="user-name">{perfil?.nome || user.email}</div>
+                  <div className="user-role">{perfil?.papel || 'admin'} · {empresa?.nome?.split(' ')[0] || '—'}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </nav>
+
+        <div className="main">
+          <header className="topbar">
+            <button className="btn btn-ghost btn-icon" onClick={() => setCollapsed(c => !c)} style={{ fontSize:16 }}>
+              {collapsed ? "→" : "←"}
+            </button>
+            <div className="topbar-title">{TITLES[page]}</div>
+            <div className="topbar-actions">
+              {empresa && !collapsed && (
+                <span style={{ fontSize:11, color:'var(--text3)', display:'flex', alignItems:'center', gap:4 }}>
+                  🏢 {empresa.nome}
+                </span>
+              )}
+              <div style={{ position:"relative" }}>
+                <button className="btn btn-ghost btn-icon">🔔</button>
+                <div className="notif-dot" />
+              </div>
+              <button className="btn btn-ghost btn-icon" onClick={carregarDados} title="Atualizar dados">🔄</button>
+              <div style={{ width:1, height:24, background:"var(--border)" }} />
+              <div
+                className="user-avatar"
+                style={{ width:30, height:30, borderRadius:8, background:"linear-gradient(135deg,var(--accent2),var(--accent4))", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#fff", cursor:"pointer" }}
+                onClick={logout}
+                title="Sair"
+              >
+                {iniciais}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            {dbLoading && (
+              <div style={{ position:'fixed', top:64, right:20, background:'var(--card)', border:'1px solid var(--border)', borderRadius:8, padding:'8px 14px', fontSize:12, color:'var(--text2)', zIndex:999, display:'flex', alignItems:'center', gap:6 }}>
+                <span style={{ animation:'pulse 1s infinite' }}>⏳</span> Atualizando dados...
+              </div>
+            )}
+            <Page key={page} {...pageProps} />
           </div>
         </div>
       </div>

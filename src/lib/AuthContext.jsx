@@ -10,7 +10,6 @@ export function AuthProvider({ children }) {
   const [empresa, setEmpresa] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // Carrega perfil + empresa do usuário logado
   async function carregarPerfil(userId) {
     const { data: p } = await supabase
       .from('perfis')
@@ -25,14 +24,12 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    // Sessão inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) carregarPerfil(session.user.id)
       setLoading(false)
     })
 
-    // Escuta mudanças de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) carregarPerfil(session.user.id)
@@ -62,29 +59,16 @@ export function AuthProvider({ children }) {
     const userId = authData.user?.id
     if (!userId) return { error: new Error('Usuário não criado') }
 
-    // 2. Cria empresa
-    const { data: emp, error: empError } = await supabase
-      .from('empresas')
-      .insert({ nome: nomeEmpresa, cnpj })
-      .select()
-      .single()
-    if (empError) return { error: empError }
+    // 2. Usa a função security definer que cria empresa+perfil+categorias
+    const { error: fnError } = await supabase.rpc('criar_empresa_usuario', {
+      p_user_id:      userId,
+      p_nome:         nome,
+      p_email:        email,
+      p_nome_empresa: nomeEmpresa,
+      p_cnpj:         cnpj,
+    })
 
-    // 3. Cria perfil vinculado
-    const { error: perfError } = await supabase
-      .from('perfis')
-      .insert({ id: userId, empresa_id: emp.id, nome, email, papel: 'admin' })
-    if (perfError) return { error: perfError }
-
-    // 4. Categorias padrão
-    await supabase.from('categorias').insert([
-      { empresa_id: emp.id, nome: 'Serviços Prestados', tipo: 'receita', cor: '#00D4A0', icone: '💼' },
-      { empresa_id: emp.id, nome: 'Venda de Produtos',  tipo: 'receita', cor: '#0090FF', icone: '📦' },
-      { empresa_id: emp.id, nome: 'Tributário',          tipo: 'despesa', cor: '#FF4757', icone: '⚖️' },
-      { empresa_id: emp.id, nome: 'Folha de Pagamento',  tipo: 'despesa', cor: '#FF6B35', icone: '👥' },
-      { empresa_id: emp.id, nome: 'Infraestrutura',      tipo: 'despesa', cor: '#A855F7', icone: '🏢' },
-      { empresa_id: emp.id, nome: 'Marketing',           tipo: 'despesa', cor: '#FFB800', icone: '📣' },
-    ])
+    if (fnError) return { error: fnError }
 
     return { data: authData }
   }

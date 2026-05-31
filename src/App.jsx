@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "./lib/AuthContext";
+import NovoLancamento from "./pages/forms/NovoLancamento";
+import NovaContaPagar from "./pages/forms/NovaContaPagar";
+import NovaContaReceber from "./pages/forms/NovaContaReceber";
+import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
 
@@ -1744,7 +1748,7 @@ function AppLegacy() {
 
 // ─── APP COM AUTH + BANCO ────────────────────────────────────────────────────
 // Sobrescreve o export default acima — este é o real com Supabase integrado
-export { App as default }
+// export removido — AppWithForms é o default final
 
 function App() {
   const { user, perfil, empresa, loading, logout } = useAuth();
@@ -1871,6 +1875,176 @@ function App() {
               </div>
             )}
             <Page key={page} {...pageProps} />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── ROUTER DE FORMULÁRIOS ────────────────────────────────────────────────────
+// Injeta navegação para formulários no App existente
+export { AppWithForms as default }
+
+function AppWithForms() {
+  const { user, perfil, empresa, loading, logout } = useAuth();
+  const [page,      setPage]      = useState("dashboard");
+  const [formPage,  setFormPage]  = useState(null); // null = não está em form
+  const [collapsed, setCollapsed] = useState(false);
+  const [dbData,    setDbData]    = useState({});
+  const [dbLoading, setDbLoading] = useState(false);
+
+  const carregarDados = useCallback(async () => {
+    if (!empresa?.id) return;
+    setDbLoading(true);
+    try { const r = await DashboardDB.resumo(empresa.id); setDbData(r); }
+    catch(e) { console.error(e); }
+    setDbLoading(false);
+  }, [empresa?.id]);
+
+  useEffect(() => { carregarDados(); }, [carregarDados]);
+
+  const navigate = (p) => { setFormPage(null); setPage(p); };
+  const openForm = (f)  => setFormPage(f);
+  const closeForm = ()  => { setFormPage(null); carregarDados(); };
+
+  const pageProps = { empresa, empresaId: empresa?.id, dbData, recarregar: carregarDados, openForm };
+  const PAGES = {
+    dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
+    creditos: Creditos, ia: IAChat, estrategico: Estrategico,
+    relatorios: Relatorios, config: Configuracoes,
+  };
+  const Page = PAGES[page] || Dashboard;
+  const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';
+
+  if (loading) return (
+    <>
+      <style>{CSS}</style>
+      <div style={{ height:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'var(--bg)', flexDirection:'column', gap:16 }}>
+        <div style={{ width:48, height:48, borderRadius:14, background:'linear-gradient(135deg,#00D4A0,#0090FF)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:24 }}>⚡</div>
+        <div style={{ color:'var(--text3)', fontSize:13 }}>Carregando...</div>
+      </div>
+    </>
+  );
+
+  if (!user) return <Login />;
+
+  // Renderiza formulário em tela cheia (substitui o conteúdo principal)
+  const renderFormPage = () => {
+    const props = { onBack: closeForm, onSaved: carregarDados };
+    switch(formPage) {
+      case 'lancamento':      return <NovoLancamento    {...props} />;
+      case 'conta-pagar':     return <NovaContaPagar    {...props} />;
+      case 'conta-receber':   return <NovaContaReceber  {...props} />;
+      case 'cliente':         return <NovoCliente       {...props} tipo="cliente"    />;
+      case 'fornecedor':      return <NovoCliente       {...props} tipo="fornecedor" />;
+      default: return null;
+    }
+  };
+
+  return (
+    <>
+      <style>{CSS}</style>
+      <div className="app">
+        <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+          <div className="sidebar-logo">
+            <div className="logo-icon">⚡</div>
+            {!collapsed && <div className="logo-text">Fiscal<span>AI</span></div>}
+          </div>
+
+          {NAV.map((sec, si) => (
+            <div key={si} className="sidebar-section">
+              {!collapsed && <div className="sidebar-section-label">{sec.section}</div>}
+              {sec.items.map(item => (
+                <div key={item.id}
+                  className={`nav-item ${page === item.id && !formPage ? "active" : ""}`}
+                  onClick={() => navigate(item.id)}
+                  title={collapsed ? item.label : ""}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  {!collapsed && <span className="nav-label">{item.label}</span>}
+                  {!collapsed && item.badge && <span className={`nav-badge ${item.badgeType || ""}`}>{item.badge}</span>}
+                </div>
+              ))}
+            </div>
+          ))}
+
+          {/* Atalhos de formulário no sidebar */}
+          {!collapsed && (
+            <div className="sidebar-section">
+              <div className="sidebar-section-label">Novo</div>
+              {[
+                { label: '+ Lançamento',    form: 'lancamento'    },
+                { label: '+ Conta a Pagar', form: 'conta-pagar'   },
+                { label: '+ A Receber',     form: 'conta-receber' },
+                { label: '+ Cliente',       form: 'cliente'       },
+                { label: '+ Fornecedor',    form: 'fornecedor'    },
+              ].map(i => (
+                <div key={i.form}
+                  className={`nav-item ${formPage === i.form ? 'active' : ''}`}
+                  onClick={() => openForm(i.form)}
+                >
+                  <span className="nav-icon" style={{ color: 'var(--accent)', fontSize: 12 }}>●</span>
+                  <span className="nav-label" style={{ fontSize: 12 }}>{i.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="sidebar-bottom">
+            <div className="user-card" onClick={logout} title="Sair">
+              <div className="user-avatar">{iniciais}</div>
+              {!collapsed && (
+                <div className="user-info">
+                  <div className="user-name">{perfil?.nome || user.email}</div>
+                  <div className="user-role">{perfil?.papel || 'admin'} · {empresa?.nome?.split(' ')[0] || '—'}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </nav>
+
+        <div className="main">
+          <header className="topbar">
+            <button className="btn btn-ghost btn-icon" onClick={() => setCollapsed(c => !c)} style={{ fontSize:16 }}>
+              {collapsed ? "→" : "←"}
+            </button>
+            <div className="topbar-title">
+              {formPage ? {
+                'lancamento': 'Novo Lançamento', 'conta-pagar': 'Nova Conta a Pagar',
+                'conta-receber': 'Nova Conta a Receber', 'cliente': 'Novo Cliente',
+                'fornecedor': 'Novo Fornecedor',
+              }[formPage] : TITLES[page]}
+            </div>
+            <div className="topbar-actions">
+              {!formPage && (
+                <button className="btn btn-primary" onClick={() => openForm('lancamento')}>
+                  + Lançamento
+                </button>
+              )}
+              <div style={{ position:"relative" }}>
+                <button className="btn btn-ghost btn-icon">🔔</button>
+                <div className="notif-dot" />
+              </div>
+              <button className="btn btn-ghost btn-icon" onClick={carregarDados} title="Atualizar">🔄</button>
+              <div style={{ width:1, height:24, background:"var(--border)" }} />
+              <div
+                className="user-avatar"
+                style={{ width:30, height:30, borderRadius:8, background:"linear-gradient(135deg,var(--accent2),var(--accent4))", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#fff", cursor:"pointer" }}
+                onClick={logout} title="Sair"
+              >
+                {iniciais}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            {dbLoading && (
+              <div style={{ position:'fixed', top:64, right:20, background:'var(--card)', border:'1px solid var(--border)', borderRadius:8, padding:'8px 14px', fontSize:12, color:'var(--text2)', zIndex:999, display:'flex', alignItems:'center', gap:6 }}>
+                <span style={{ animation:'pulse 1s infinite' }}>⏳</span> Atualizando...
+              </div>
+            )}
+            {formPage ? renderFormPage() : <Page key={page} {...pageProps} />}
           </div>
         </div>
       </div>

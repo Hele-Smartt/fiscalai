@@ -814,242 +814,357 @@ function Dashboard() {
   );
 }
 
-function Financeiro() {
-  const [tab, setTab] = useState(0);
+function Financeiro({ empresaId, openForm, recarregar }) {
+  const [tab, setTab]               = useState(0);
+  const [lancamentos, setLancamentos] = useState([]);
+  const [contasPagar, setContasPagar] = useState([]);
+  const [contasReceber, setContasReceber] = useState([]);
+  const [totaisPagar, setTotaisPagar]   = useState({ pendente:0, vencido:0, pago:0 });
+  const [totaisReceber, setTotaisReceber] = useState({ pendente:0, vencido:0, recebido:0 });
+  const [fluxo, setFluxo]           = useState({ entradas:0, saidas:0, saldo:0 });
+  const [evolucao, setEvolucao]     = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [filtroStatus, setFiltroStatus] = useState('');
   const tabs = ["Fluxo de Caixa", "DRE Gerencial", "Contas a Pagar", "Contas a Receber"];
+
+  useEffect(() => {
+    if (!empresaId) return;
+    carregarDados();
+  }, [empresaId, tab]);
+
+  async function carregarDados() {
+    setLoading(true);
+    const mes = new Date().toISOString().slice(0,7);
+    if (tab === 0 || tab === 1) {
+      const [lRes, fluxoRes, evRes] = await Promise.all([
+        Lancamentos.listar(empresaId, { limite: 20 }),
+        Lancamentos.resumoMes(empresaId, mes),
+        Lancamentos.evolucao12Meses(empresaId),
+      ]);
+      setLancamentos(lRes.data || []);
+      setFluxo(fluxoRes);
+      setEvolucao(evRes);
+    }
+    if (tab === 2) {
+      const [res, tot] = await Promise.all([
+        ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
+        ContasPagar.totais(empresaId),
+      ]);
+      setContasPagar(res.data || []);
+      setTotaisPagar(tot);
+    }
+    if (tab === 3) {
+      const [res, tot] = await Promise.all([
+        ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
+        ContasReceber.totais(empresaId),
+      ]);
+      setContasReceber(res.data || []);
+      setTotaisReceber(tot);
+    }
+    setLoading(false);
+  }
+
+  async function marcarPago(id) {
+    await ContasPagar.pagar(id, new Date().toISOString().slice(0,10), null);
+    carregarDados();
+  }
+
+  async function marcarRecebido(id) {
+    await ContasReceber.receber(id, new Date().toISOString().slice(0,10), null);
+    carregarDados();
+  }
+
+  async function deletarLancamento(id) {
+    if (!confirm('Excluir este lançamento?')) return;
+    await Lancamentos.deletar(id);
+    carregarDados();
+  }
+
+  const revenueArr = evolucao.map(e => e.entradas || 0);
+  const expenseArr = evolucao.map(e => e.saidas   || 0);
+  const labelsArr  = evolucao.map(e => e.mes);
+  const maxEv = Math.max(...revenueArr, ...expenseArr, 1);
+
+  const statusBadge = (s) => {
+    const map = {
+      confirmado:  ['badge-success', '✓ Confirmado'],
+      pendente:    ['badge-warn',    '⏳ Pendente'],
+      cancelado:   ['badge-danger',  '✗ Cancelado'],
+      pago:        ['badge-success', '✓ Pago'],
+      vencido:     ['badge-danger',  '⚠ Vencido'],
+      recebido:    ['badge-success', '✓ Recebido'],
+      parcelado:   ['badge-info',    '📋 Parcelado'],
+      parcial:     ['badge-warn',    '📋 Parcial'],
+    };
+    const [cls, label] = map[s] || ['badge-info', s];
+    return <span className={`badge ${cls}`}>{label}</span>;
+  };
+
   return (
     <div className="fade-up">
       <div className="section-header mb-20">
         <div>
           <div className="section-title">Gestão Financeira</div>
-          <div className="section-sub">Controle completo das finanças empresariais</div>
+          <div className="section-sub">Dados reais da empresa · {new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</div>
         </div>
         <div className="flex gap-8">
-          <button className="btn btn-ghost">📥 OFX</button>
-          <button className="btn btn-ghost">📊 Exportar</button>
-          <button className="btn btn-primary">+ Lançamento</button>
+          <button className="btn btn-ghost" onClick={carregarDados}>🔄 Atualizar</button>
+          <button className="btn btn-ghost" onClick={() => openForm?.('conta-pagar')}>+ Conta a Pagar</button>
+          <button className="btn btn-primary" onClick={() => openForm?.('lancamento')}>+ Lançamento</button>
         </div>
       </div>
 
       <div className="tabs">
-        {tabs.map((t, i) => <div key={i} className={`tab ${tab === i ? "active" : ""}`} onClick={() => setTab(i)}>{t}</div>)}
+        {tabs.map((t,i) => <div key={i} className={`tab ${tab===i?'active':''}`} onClick={() => { setTab(i); setFiltroStatus(''); }}>{t}</div>)}
       </div>
 
+      {/* ── FLUXO DE CAIXA ── */}
       {tab === 0 && (
         <div>
           <div className="metrics-grid mb-16">
             {[
-              { label: "Saldo Atual", val: "R$ 1,24M", c: "var(--success)" },
-              { label: "Entradas (Mês)", val: "R$ 910K", c: "var(--accent2)" },
-              { label: "Saídas (Mês)", val: "R$ 534K", c: "var(--danger)" },
-              { label: "Resultado", val: "R$ 376K", c: "var(--accent)" },
-            ].map((m, i) => (
-              <div key={i} className="metric-card" style={{ "--accent-color": m.c }}>
+              { label: "Entradas (Mês)", val: fmtK(fluxo.entradas), c: "var(--success)" },
+              { label: "Saídas (Mês)",   val: fmtK(fluxo.saidas),   c: "var(--danger)" },
+              { label: "Saldo do Mês",   val: fmtK(fluxo.saldo),    c: fluxo.saldo >= 0 ? "var(--accent)" : "var(--danger)" },
+              { label: "Lançamentos",    val: lancamentos.length,    c: "var(--accent2)" },
+            ].map((m,i) => (
+              <div key={i} className="metric-card" style={{"--accent-color": m.c}}>
                 <div className="metric-label">{m.label}</div>
-                <div className="metric-value" style={{ color: m.c }}>{m.val}</div>
+                <div className="metric-value" style={{color: m.c}}>{m.val}</div>
               </div>
             ))}
           </div>
 
-          <div className="grid-12">
-            <div className="card">
-              <div className="card-header"><span className="card-title">Projeção — Próximos 12 meses</span></div>
+          {evolucao.length > 0 && (
+            <div className="card mb-16">
+              <div className="card-header">
+                <span className="card-title">Evolução 12 Meses</span>
+                <div className="flex gap-8 text-xs text-muted">
+                  <span style={{display:'flex',gap:4,alignItems:'center'}}><span style={{width:8,height:8,background:'var(--accent2)',borderRadius:2,display:'inline-block'}}/>Entradas</span>
+                  <span style={{display:'flex',gap:4,alignItems:'center'}}><span style={{width:8,height:8,background:'var(--danger)',borderRadius:2,display:'inline-block'}}/>Saídas</span>
+                </div>
+              </div>
               <div className="card-body">
-                <LineChart data={[...revenueData.slice(6), ...revenueData.slice(0,6).map(v => v*1.15)]} color="var(--accent)" h={120} />
-                <div className="grid-3" style={{ marginTop: 16 }}>
-                  {[
-                    { l: "Receita Projetada", v: "R$ 12,4M", c: "var(--accent)" },
-                    { l: "Despesa Projetada", v: "R$ 7,1M",  c: "var(--danger)" },
-                    { l: "Lucro Projetado",   v: "R$ 5,3M",  c: "var(--success)" },
-                  ].map((x, i) => (
-                    <div key={i} style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "var(--font-head)", color: x.c }}>{x.v}</div>
-                      <div style={{ fontSize: 11, color: "var(--text3)" }}>{x.l}</div>
+                <div className="bar-chart" style={{height:140}}>
+                  {evolucao.map((e,i) => (
+                    <div key={i} className="bar-group">
+                      <div className="bar" style={{height:`${(e.entradas/maxEv)*100}%`,"--bar-color":"var(--accent2)"}} title={`${e.mes}: ${fmtK(e.entradas)}`}/>
+                      <div className="bar" style={{height:`${(e.saidas/maxEv)*100}%`,"--bar-color":"var(--danger)"}} title={`${e.mes}: ${fmtK(e.saidas)}`}/>
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-header"><span className="card-title">Composição do Fluxo</span></div>
-              <div className="card-body">
-                {[
-                  { label: "Serviços", val: 528000, pct: 58, c: "var(--accent2)" },
-                  { label: "Produtos", val: 254000, pct: 28, c: "var(--accent)" },
-                  { label: "Recorrente", val: 128000, pct: 14, c: "var(--accent4)" },
-                ].map((cf, i) => (
-                  <div key={i} className="cf-row">
-                    <div className="cf-label"><div className="cf-dot" style={{ background: cf.c }} />{cf.label}</div>
-                    <div className="flex items-center gap-12">
-                      <div style={{ width: 100 }}>
-                        <div className="progress">
-                          <div className="progress-fill" style={{ width: `${cf.pct}%`, background: cf.c }} />
-                        </div>
-                      </div>
-                      <div className="cf-val" style={{ color: cf.c }}>{fmt(cf.val)}</div>
-                    </div>
-                  </div>
-                ))}
-                <div className="divider" />
-                <div className="alert alert-success" style={{ marginTop: 12 }}>
-                  <span className="alert-icon">✅</span>
-                  <div className="alert-content">
-                    <div className="alert-title">Fluxo saudável</div>
-                    <div className="alert-desc">Índice de cobertura: 2,4x. Reserva para 8 meses operacionais.</div>
-                  </div>
+                <div style={{display:'flex',gap:6,marginTop:6,justifyContent:'space-between'}}>
+                  {evolucao.map((e,i) => <span key={i} style={{fontSize:10,color:'var(--text3)',flex:1,textAlign:'center'}}>{e.mes}</span>)}
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="card" style={{ marginTop: 16 }}>
+          <div className="card">
             <div className="card-header">
               <span className="card-title">Movimentações Recentes</span>
-              <div className="flex gap-8">
-                <input className="inp" placeholder="🔍 Buscar..." style={{ width: 200 }} />
-                <button className="btn btn-ghost" style={{ fontSize: 11 }}>Filtrar</button>
+              <button className="btn btn-ghost" style={{fontSize:11}} onClick={() => openForm?.('lancamento')}>+ Novo</button>
+            </div>
+            {loading ? (
+              <div className="empty">Carregando...</div>
+            ) : lancamentos.length === 0 ? (
+              <div className="empty">
+                <div style={{fontSize:32,marginBottom:8}}>💸</div>
+                <div>Nenhum lançamento ainda.</div>
+                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('lancamento')}>+ Primeiro Lançamento</button>
               </div>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Tipo</th><th>Valor</th></tr></thead>
-                <tbody>
-                  {transactions.map(t => (
-                    <tr key={t.id}>
-                      <td className="primary">{t.desc}</td>
-                      <td><span className="badge badge-info">{t.cat}</span></td>
-                      <td>{t.date}/2026</td>
-                      <td><span className={`badge ${t.type === "entrada" ? "badge-success" : "badge-danger"}`}>{t.type === "entrada" ? "↑ Entrada" : "↓ Saída"}</span></td>
-                      <td className={`money ${t.val > 0 ? "pos" : "neg"}`}>{t.val > 0 ? "+" : ""}{fmt(Math.abs(t.val))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Status</th><th>Valor</th><th></th></tr></thead>
+                  <tbody>
+                    {lancamentos.map(t => (
+                      <tr key={t.id}>
+                        <td><div className="primary" style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.descricao}</div>
+                          {(t.clientes?.nome || t.fornecedores?.nome) && <div style={{fontSize:11,color:'var(--text3)'}}>{t.clientes?.nome || t.fornecedores?.nome}</div>}
+                        </td>
+                        <td>{t.categorias ? <span className="badge badge-info">{t.categorias.icone} {t.categorias.nome}</span> : <span className="text-muted">—</span>}</td>
+                        <td>{new Date(t.data_lancamento+'T12:00:00').toLocaleDateString('pt-BR')}</td>
+                        <td>{statusBadge(t.status)}</td>
+                        <td className={`money ${t.tipo==='entrada'?'pos':'neg'}`}>{t.tipo==='entrada'?'+':'-'}{fmt(Math.abs(t.valor))}</td>
+                        <td><button className="btn btn-ghost btn-icon" style={{fontSize:12,color:'var(--danger)'}} onClick={() => deletarLancamento(t.id)}>🗑</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
 
+      {/* ── DRE GERENCIAL ── */}
       {tab === 1 && (
         <div className="card">
-          <div className="card-header"><span className="card-title">DRE Gerencial — Maio 2026</span><span className="badge badge-success">Lucro Apurado</span></div>
+          <div className="card-header"><span className="card-title">DRE Gerencial — {new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</span></div>
           <div className="card-body">
             {[
-              { label: "RECEITA BRUTA", val: 910000, bold: true, border: true },
-              { label: "(-) Deduções (impostos s/ receita)", val: -91000, indent: true },
-              { label: "(-) Devoluções", val: -12400, indent: true },
-              { label: "RECEITA LÍQUIDA", val: 806600, bold: true, border: true, accent: "var(--accent2)" },
-              { label: "(-) Custo de Serviços Prestados (CSP)", val: -284300, indent: true },
-              { label: "LUCRO BRUTO", val: 522300, bold: true, border: true, accent: "var(--accent)" },
-              { label: "Margem Bruta", val: "57,4%", indent: true, isText: true, positive: true },
-              { label: "(-) Despesas Operacionais", val: -186800, indent: true },
-              { label: "(-) Despesas Administrativas", val: -74200, indent: true },
-              { label: "EBITDA", val: 261300, bold: true, border: true, accent: "var(--success)" },
-              { label: "Margem EBITDA", val: "28,7%", indent: true, isText: true, positive: true },
-              { label: "(-) Depreciação e Amortização", val: -18400, indent: true },
-              { label: "EBIT / Lucro Operacional", val: 242900, bold: true, accent: "var(--accent)" },
-              { label: "Resultado Financeiro", val: -8200, indent: true },
-              { label: "LAIR", val: 234700, bold: true },
-              { label: "(-) IRPJ + CSLL", val: -52800, indent: true },
-              { label: "LUCRO LÍQUIDO", val: 181900, bold: true, border: true, accent: "var(--success)" },
-              { label: "Margem Líquida", val: "20,0%", indent: true, isText: true, positive: true },
-            ].map((row, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", borderBottom: row.border ? "2px solid var(--border2)" : "1px solid var(--border)", background: row.bold ? "rgba(255,255,255,0.02)" : "transparent", paddingLeft: row.indent ? 32 : 12, borderRadius: 4, marginBottom: 1 }}>
-                <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 400, color: row.bold ? "var(--text)" : "var(--text2)", fontFamily: row.bold ? "var(--font-head)" : "var(--font-body)" }}>{row.label}</span>
-                <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 500, color: row.accent || (row.isText ? (row.positive ? "var(--success)" : "var(--danger)") : (typeof row.val === "number" && row.val < 0 ? "var(--danger)" : "var(--text)")) }}>
-                  {row.isText ? row.val : fmt(row.val)}
-                </span>
+              { label: "RECEITA BRUTA",    val: fluxo.entradas, bold:true, border:true },
+              { label: "(-) Deduções estimadas (10%)", val: -(fluxo.entradas*0.10), indent:true },
+              { label: "RECEITA LÍQUIDA",  val: fluxo.entradas*0.90, bold:true, border:true, accent:"var(--accent2)" },
+              { label: "(-) Custos operacionais (40%)", val: -(fluxo.saidas*0.40), indent:true },
+              { label: "LUCRO BRUTO",      val: fluxo.entradas*0.90 - fluxo.saidas*0.40, bold:true, border:true, accent:"var(--accent)" },
+              { label: "(-) Despesas administrativas", val: -(fluxo.saidas*0.60), indent:true },
+              { label: "RESULTADO OPERACIONAL", val: fluxo.saldo, bold:true, accent: fluxo.saldo>=0?"var(--success)":"var(--danger)" },
+            ].map((row,i) => (
+              <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'9px 12px',borderBottom:row.border?'2px solid var(--border2)':'1px solid var(--border)',background:row.bold?'rgba(255,255,255,0.02)':'transparent',paddingLeft:row.indent?32:12,borderRadius:4,marginBottom:1}}>
+                <span style={{fontSize:13,fontWeight:row.bold?700:400,color:row.bold?'var(--text)':'var(--text2)',fontFamily:row.bold?'var(--font-head)':'var(--font-body)'}}>{row.label}</span>
+                <span style={{fontSize:13,fontWeight:row.bold?700:500,color:row.accent||(row.val<0?'var(--danger)':'var(--text)')}}>{fmt(row.val)}</span>
               </div>
             ))}
+            <div className="alert alert-info" style={{marginTop:16}}>
+              <span className="alert-icon">ℹ️</span>
+              <div className="alert-content">
+                <div className="alert-title">DRE baseado nos lançamentos reais</div>
+                <div className="alert-desc">Para um DRE completo, cadastre todos os lançamentos com categorias corretas. Os percentuais são estimativas automáticas.</div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
+      {/* ── CONTAS A PAGAR ── */}
       {tab === 2 && (
         <div>
           <div className="metrics-grid mb-16">
             {[
-              { label: "A Vencer (30d)", val: "R$ 124K", c: "var(--accent2)" },
-              { label: "Vencido", val: "R$ 38K", c: "var(--danger)" },
-              { label: "Pago no Mês", val: "R$ 534K", c: "var(--success)" },
-              { label: "Total Pendente", val: "R$ 162K", c: "var(--warn)" },
-            ].map((m, i) => (
-              <div key={i} className="metric-card" style={{ "--accent-color": m.c }}>
+              { label: "A Vencer",    val: fmtK(totaisPagar.pendente), c: "var(--warn)" },
+              { label: "Vencido",     val: fmtK(totaisPagar.vencido),  c: "var(--danger)" },
+              { label: "Pago no Mês", val: fmtK(totaisPagar.pago),     c: "var(--success)" },
+              { label: "Total",       val: fmtK(totaisPagar.pendente + totaisPagar.vencido), c: "var(--accent2)" },
+            ].map((m,i) => (
+              <div key={i} className="metric-card" style={{"--accent-color":m.c}}>
                 <div className="metric-label">{m.label}</div>
-                <div className="metric-value" style={{ color: m.c }}>{m.val}</div>
+                <div className="metric-value" style={{color:m.c}}>{m.val}</div>
               </div>
             ))}
           </div>
+
           <div className="card">
-            <div className="card-header"><span className="card-title">Contas a Pagar</span></div>
-            <div className="table-wrap"><table>
-              <thead><tr><th>Fornecedor</th><th>Vencimento</th><th>Categoria</th><th>Status</th><th>Valor</th></tr></thead>
-              <tbody>
-                {[
-                  { f: "Fornecedor Alpha", v: "28/05", c: "Insumos", s: "vencer", val: 18400 },
-                  { f: "Aluguel Escritório", v: "30/05", c: "Infraestrutura", s: "vencer", val: 5800 },
-                  { f: "Contabilidade XYZ", v: "15/05", c: "Serviços", s: "pago", val: 4200 },
-                  { f: "Fornecedor Beta", v: "10/05", c: "TI", s: "vencido", val: 12600 },
-                  { f: "Energia Elétrica", v: "05/06", c: "Utilidades", s: "vencer", val: 2840 },
-                ].map((r, i) => (
-                  <tr key={i}>
-                    <td className="primary">{r.f}</td>
-                    <td>{r.v}/2026</td>
-                    <td><span className="badge badge-info">{r.c}</span></td>
-                    <td><span className={`badge ${r.s === "pago" ? "badge-success" : r.s === "vencido" ? "badge-danger" : "badge-warn"}`}>{r.s === "pago" ? "✓ Pago" : r.s === "vencido" ? "⚠ Vencido" : "⏰ A vencer"}</span></td>
-                    <td className="money">{fmt(r.val)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
+            <div className="card-header">
+              <span className="card-title">Contas a Pagar</span>
+              <div className="flex gap-8">
+                <select className="inp" style={{width:160,padding:'6px 10px'}} value={filtroStatus} onChange={e=>{setFiltroStatus(e.target.value);setTimeout(carregarDados,0)}}>
+                  <option value="">Todos os status</option>
+                  <option value="pendente">Pendente</option>
+                  <option value="vencido">Vencido</option>
+                  <option value="pago">Pago</option>
+                  <option value="cancelado">Cancelado</option>
+                </select>
+                <button className="btn btn-primary" onClick={() => openForm?.('conta-pagar')}>+ Nova</button>
+              </div>
+            </div>
+            {loading ? <div className="empty">Carregando...</div> :
+             contasPagar.length === 0 ? (
+              <div className="empty">
+                <div style={{fontSize:32,marginBottom:8}}>📋</div>
+                <div>Nenhuma conta a pagar{filtroStatus ? ` com status "${filtroStatus}"` : ''}.</div>
+                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('conta-pagar')}>+ Cadastrar</button>
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Descrição</th><th>Fornecedor</th><th>Vencimento</th><th>Status</th><th>Valor</th><th>Ação</th></tr></thead>
+                  <tbody>
+                    {contasPagar.map(c => (
+                      <tr key={c.id}>
+                        <td className="primary">{c.descricao}</td>
+                        <td>{c.fornecedores?.nome || <span className="text-muted">—</span>}</td>
+                        <td style={{color: new Date(c.vencimento) < new Date() && c.status==='pendente' ? 'var(--danger)' : 'var(--text2)'}}>
+                          {new Date(c.vencimento+'T12:00:00').toLocaleDateString('pt-BR')}
+                        </td>
+                        <td>{statusBadge(c.status)}</td>
+                        <td className="money">{fmt(c.valor)}</td>
+                        <td>
+                          {c.status === 'pendente' || c.status === 'vencido' ? (
+                            <button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}} onClick={() => marcarPago(c.id)}>✓ Pagar</button>
+                          ) : <span style={{fontSize:11,color:'var(--text3)'}}>—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
 
+      {/* ── CONTAS A RECEBER ── */}
       {tab === 3 && (
         <div>
           <div className="metrics-grid mb-16">
             {[
-              { label: "A Receber (30d)", val: "R$ 284K", c: "var(--success)" },
-              { label: "Inadimplentes", val: "R$ 42K", c: "var(--danger)" },
-              { label: "Recebido no Mês", val: "R$ 910K", c: "var(--accent2)" },
-              { label: "Taxa Adimplência", val: "94,2%", c: "var(--accent)" },
-            ].map((m, i) => (
-              <div key={i} className="metric-card" style={{ "--accent-color": m.c }}>
+              { label: "A Receber",       val: fmtK(totaisReceber.pendente),  c: "var(--accent2)" },
+              { label: "Vencido",         val: fmtK(totaisReceber.vencido),   c: "var(--danger)" },
+              { label: "Recebido no Mês", val: fmtK(totaisReceber.recebido),  c: "var(--success)" },
+              { label: "Total Pendente",  val: fmtK(totaisReceber.pendente + totaisReceber.vencido), c: "var(--warn)" },
+            ].map((m,i) => (
+              <div key={i} className="metric-card" style={{"--accent-color":m.c}}>
                 <div className="metric-label">{m.label}</div>
-                <div className="metric-value" style={{ color: m.c }}>{m.val}</div>
+                <div className="metric-value" style={{color:m.c}}>{m.val}</div>
               </div>
             ))}
           </div>
+
           <div className="card">
-            <div className="card-header"><span className="card-title">Contas a Receber</span></div>
-            <div className="table-wrap"><table>
-              <thead><tr><th>Cliente</th><th>NF</th><th>Vencimento</th><th>Status</th><th>Valor</th></tr></thead>
-              <tbody>
-                {[
-                  { c: "Cliente Alfa S.A.", nf: "4801", v: "30/05", s: "pendente", val: 48500 },
-                  { c: "Beta Indústria Ltda.", nf: "4798", v: "15/06", s: "pendente", val: 32000 },
-                  { c: "Gama Comércio ME", nf: "4790", v: "10/05", s: "inadimplente", val: 18400 },
-                  { c: "Delta Tech Corp", nf: "4785", v: "22/05", s: "recebido", val: 64200 },
-                  { c: "Epsilon Serviços", nf: "4780", v: "28/06", s: "pendente", val: 21800 },
-                ].map((r, i) => (
-                  <tr key={i}>
-                    <td className="primary">{r.c}</td>
-                    <td style={{ color: "var(--text3)" }}>#{r.nf}</td>
-                    <td>{r.v}/2026</td>
-                    <td><span className={`badge ${r.s === "recebido" ? "badge-success" : r.s === "inadimplente" ? "badge-danger" : "badge-warn"}`}>{r.s === "recebido" ? "✓ Recebido" : r.s === "inadimplente" ? "⚠ Inadimplente" : "⏰ Pendente"}</span></td>
-                    <td className={`money ${r.s === "recebido" ? "pos" : ""}`}>{fmt(r.val)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
+            <div className="card-header">
+              <span className="card-title">Contas a Receber</span>
+              <div className="flex gap-8">
+                <select className="inp" style={{width:160,padding:'6px 10px'}} value={filtroStatus} onChange={e=>{setFiltroStatus(e.target.value);setTimeout(carregarDados,0)}}>
+                  <option value="">Todos os status</option>
+                  <option value="pendente">Pendente</option>
+                  <option value="vencido">Vencido</option>
+                  <option value="recebido">Recebido</option>
+                  <option value="parcial">Parcial</option>
+                </select>
+                <button className="btn btn-primary" onClick={() => openForm?.('conta-receber')}>+ Nova</button>
+              </div>
+            </div>
+            {loading ? <div className="empty">Carregando...</div> :
+             contasReceber.length === 0 ? (
+              <div className="empty">
+                <div style={{fontSize:32,marginBottom:8}}>💰</div>
+                <div>Nenhuma conta a receber{filtroStatus ? ` com status "${filtroStatus}"` : ''}.</div>
+                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('conta-receber')}>+ Cadastrar</button>
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Descrição</th><th>Cliente</th><th>Vencimento</th><th>NF</th><th>Status</th><th>Valor</th><th>Ação</th></tr></thead>
+                  <tbody>
+                    {contasReceber.map(c => (
+                      <tr key={c.id}>
+                        <td className="primary">{c.descricao}</td>
+                        <td>{c.clientes?.nome || <span className="text-muted">—</span>}</td>
+                        <td style={{color: new Date(c.vencimento) < new Date() && c.status==='pendente' ? 'var(--danger)' : 'var(--text2)'}}>
+                          {new Date(c.vencimento+'T12:00:00').toLocaleDateString('pt-BR')}
+                        </td>
+                        <td style={{color:'var(--text3)'}}>{c.nota_fiscal_numero || '—'}</td>
+                        <td>{statusBadge(c.status)}</td>
+                        <td className="money pos">{fmt(c.valor)}</td>
+                        <td>
+                          {c.status === 'pendente' || c.status === 'vencido' ? (
+                            <button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}} onClick={() => marcarRecebido(c.id)}>✓ Receber</button>
+                          ) : <span style={{fontSize:11,color:'var(--text3)'}}>—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
     </div>
   );
 }
-
 function Tributario() {
   return (
     <div className="fade-up">

@@ -655,153 +655,251 @@ function ScoreRing({ score, size = 140 }) {
 
 // ─── MODULES ─────────────────────────────────────────────────────────────────
 
-function Dashboard() {
-  const taxSeg = [
-    { color: "#FF4757", val: 892, label: "Federal" },
-    { color: "#0090FF", val: 421, label: "Contrib." },
-    { color: "#A855F7", val: 284, label: "Estadual" },
-    { color: "#FFB800", val: 94,  label: "Municipal" },
-  ];
+function Dashboard({ empresaId, openForm, recarregar }) {
+  const [dados,   setDados]   = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!empresaId) return;
+    carregar();
+  }, [empresaId]);
+
+  async function carregar() {
+    setLoading(true);
+    try {
+      const r = await DashboardDB.resumo(empresaId);
+      setDados(r);
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  }
+
+  // Valores extraídos ou zeros
+  const entradas   = dados?.fluxo?.entradas   || 0;
+  const saidas     = dados?.fluxo?.saidas     || 0;
+  const saldo      = dados?.fluxo?.saldo      || 0;
+  const aPagar     = dados?.pagar?.pendente   || 0;
+  const aReceber   = dados?.receber?.pendente || 0;
+  const evolucao   = dados?.evolucao          || [];
+  const tributos   = dados?.tributos          || {};
+  const totalTrib  = Object.values(tributos).reduce((s,v) => s + v, 0);
+
+  const maxEv = Math.max(...evolucao.map(e => Math.max(e.entradas||0, e.saidas||0)), 1);
+
+  // Segmentos do donut tributário
+  const tribSeg = [
+    { color: "#FF4757", val: tributos.icms   || 0, label: "ICMS"   },
+    { color: "#0090FF", val: tributos.pis    || 0, label: "PIS"    },
+    { color: "#A855F7", val: tributos.cofins || 0, label: "COFINS" },
+    { color: "#FFB800", val: tributos.iss    || 0, label: "ISS"    },
+    { color: "#FF6B35", val: tributos.inss   || 0, label: "INSS"   },
+  ].filter(s => s.val > 0);
+
+  const hasTrib = tribSeg.length > 0;
+
+  if (loading) return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:400, flexDirection:'column', gap:12 }}>
+      <div style={{ width:40, height:40, borderRadius:12, background:'linear-gradient(135deg,#00D4A0,#0090FF)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, animation:'pulse 1s infinite' }}>⚡</div>
+      <div style={{ color:'var(--text3)', fontSize:13 }}>Carregando dados reais...</div>
+    </div>
+  );
+
   return (
     <div className="fade-up">
       <div className="section-header mb-20">
         <div>
           <div className="section-title">Dashboard Executivo</div>
-          <div className="section-sub">Visão consolidada · Maio 2026 · Empresa: Acme Tecnologia Ltda.</div>
+          <div className="section-sub">Dados reais · {new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</div>
         </div>
         <div className="flex gap-8">
-          <button className="btn btn-ghost btn-icon">📥 Exportar</button>
-          <button className="btn btn-primary">+ Novo Lançamento</button>
+          <button className="btn btn-ghost" onClick={carregar}>🔄 Atualizar</button>
+          <button className="btn btn-primary" onClick={() => openForm?.('lancamento')}>+ Lançamento</button>
         </div>
       </div>
 
-      {/* KPI Row */}
-      <div className="kpi-row fade-up fade-up-1">
+      {/* KPIs principais */}
+      <div className="kpi-row fade-up fade-up-1 mb-16">
         {[
-          { icon: "💹", label: "Receita Mensal", val: "R$ 910K", color: "#0090FF", bg: "rgba(0,144,255,0.1)" },
-          { icon: "📉", label: "Impostos Pagos", val: "R$ 168K", color: "#FF6B35", bg: "rgba(255,107,53,0.1)" },
-          { icon: "♻️", label: "Créditos Recuperáveis", val: "R$ 609K", color: "#A855F7", bg: "rgba(168,85,247,0.1)" },
-          { icon: "💰", label: "Economia Potencial", val: "R$ 312K", color: "#00D4A0", bg: "rgba(0,212,160,0.1)" },
-        ].map((k, i) => (
+          { icon:"💹", label:"Entradas no Mês",   val: fmtK(entradas),  color:"#0090FF", bg:"rgba(0,144,255,0.1)"  },
+          { icon:"📉", label:"Saídas no Mês",      val: fmtK(saidas),    color:"#FF6B35", bg:"rgba(255,107,53,0.1)" },
+          { icon:"💰", label:"Saldo do Mês",        val: fmtK(saldo),     color: saldo>=0?"#00D4A0":"#FF4757", bg: saldo>=0?"rgba(0,212,160,0.1)":"rgba(255,71,87,0.1)" },
+          { icon:"⏳", label:"A Pagar (pendente)",  val: fmtK(aPagar),   color:"#FFB800", bg:"rgba(255,184,0,0.1)"  },
+          { icon:"🎯", label:"A Receber (pendente)",val: fmtK(aReceber), color:"#A855F7", bg:"rgba(168,85,247,0.1)" },
+        ].map((k,i) => (
           <div key={i} className="kpi-item">
-            <div className="kpi-icon-box" style={{ background: k.bg }}>
-              <span>{k.icon}</span>
-            </div>
+            <div className="kpi-icon-box" style={{background:k.bg}}><span>{k.icon}</span></div>
             <div className="kpi-data">
-              <div className="kpi-val" style={{ color: k.color }}>{k.val}</div>
+              <div className="kpi-val" style={{color:k.color}}>{k.val}</div>
               <div className="kpi-lbl">{k.label}</div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Main metrics */}
-      <div className="metrics-grid fade-up fade-up-2">
-        {[
-          { label: "Receita YTD", val: "R$ 6,2M", ch: "+18.4%", up: true, icon: "📈", c: "#0090FF" },
-          { label: "EBITDA", val: "42,1%",  ch: "+3.2pp", up: true, icon: "🎯", c: "#00D4A0" },
-          { label: "Carga Tributária", val: "18,5%", ch: "-1.4pp", up: true, icon: "⚖️", c: "#A855F7" },
-          { label: "Score Fiscal", val: "784", ch: "+12 pts", up: true, icon: "🏆", c: "#FFB800" },
-        ].map((m, i) => (
-          <div key={i} className="metric-card" style={{ "--accent-color": m.c }}>
-            <div className="metric-icon">{m.icon}</div>
-            <div className="metric-label">{m.label}</div>
-            <div className="metric-value">{m.val}</div>
-            <div className={`metric-change ${m.up ? "up" : "down"}`}>
-              <span>{m.up ? "↑" : "↓"}</span>
-              <span>{m.ch} vs mês anterior</span>
+      {/* Alertas inteligentes */}
+      {(aPagar > 0 || aReceber > 0 || saldo < 0) && (
+        <div className="fade-up fade-up-2 mb-16" style={{display:'flex',flexDirection:'column',gap:8}}>
+          {saldo < 0 && (
+            <div className="alert alert-danger">
+              <span className="alert-icon">🚨</span>
+              <div className="alert-content">
+                <div className="alert-title">Saldo negativo no mês</div>
+                <div className="alert-desc">As saídas ({fmtK(saidas)}) superaram as entradas ({fmtK(entradas)}) em {fmt(Math.abs(saldo))}.</div>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          )}
+          {aPagar > 0 && (
+            <div className="alert alert-warn">
+              <span className="alert-icon">⚠️</span>
+              <div className="alert-content">
+                <div className="alert-title">{fmtK(aPagar)} em contas a pagar pendentes</div>
+                <div className="alert-desc">Verifique os vencimentos para evitar juros e multas.</div>
+              </div>
+            </div>
+          )}
+          {aReceber > 0 && (
+            <div className="alert alert-info">
+              <span className="alert-icon">💡</span>
+              <div className="alert-content">
+                <div className="alert-title">{fmtK(aReceber)} em contas a receber</div>
+                <div className="alert-desc">Acompanhe a inadimplência e envie lembretes aos clientes.</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Charts Row */}
+      {/* Gráfico evolução + Tributário */}
       <div className="grid-12 fade-up fade-up-3 mb-16">
         <div className="card">
           <div className="card-header">
-            <span className="card-title">Receita vs Despesas 12M</span>
+            <span className="card-title">Evolução 12 Meses</span>
             <div className="flex gap-8 text-xs text-muted">
-              <span style={{ display: "flex", gap: 4, alignItems: "center" }}><span style={{ width: 8, height: 8, background: "var(--accent2)", borderRadius: 2, display: "inline-block" }} />Receita</span>
-              <span style={{ display: "flex", gap: 4, alignItems: "center" }}><span style={{ width: 8, height: 8, background: "var(--danger)", borderRadius: 2, display: "inline-block" }} />Despesa</span>
+              <span style={{display:'flex',gap:4,alignItems:'center'}}><span style={{width:8,height:8,background:'var(--accent2)',borderRadius:2,display:'inline-block'}}/>Entradas</span>
+              <span style={{display:'flex',gap:4,alignItems:'center'}}><span style={{width:8,height:8,background:'var(--danger)',borderRadius:2,display:'inline-block'}}/>Saídas</span>
             </div>
           </div>
           <div className="card-body">
-            <BarChart data1={revenueData} data2={expenseData} labels={months} h={140} />
+            {evolucao.length === 0 ? (
+              <div className="empty">
+                <div style={{fontSize:28,marginBottom:8}}>📊</div>
+                <div>Cadastre lançamentos para visualizar a evolução financeira.</div>
+                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('lancamento')}>+ Primeiro Lançamento</button>
+              </div>
+            ) : (
+              <>
+                <div className="bar-chart" style={{height:140}}>
+                  {evolucao.map((e,i) => (
+                    <div key={i} className="bar-group">
+                      <div className="bar" style={{height:`${((e.entradas||0)/maxEv)*100}%`,"--bar-color":"var(--accent2)"}} title={`${e.mes}: ${fmtK(e.entradas||0)}`}/>
+                      <div className="bar" style={{height:`${((e.saidas||0)/maxEv)*100}%`,"--bar-color":"var(--danger)"}} title={`${e.mes}: ${fmtK(e.saidas||0)}`}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:'flex',gap:6,marginTop:6,justifyContent:'space-between'}}>
+                  {evolucao.map((e,i) => <span key={i} style={{fontSize:10,color:'var(--text3)',flex:1,textAlign:'center'}}>{e.mes}</span>)}
+                </div>
+                {/* Resumo abaixo do gráfico */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginTop:16}}>
+                  {[
+                    { l:'Total Entradas', v: fmtK(evolucao.reduce((s,e)=>s+(e.entradas||0),0)), c:'var(--accent2)' },
+                    { l:'Total Saídas',   v: fmtK(evolucao.reduce((s,e)=>s+(e.saidas||0),0)),   c:'var(--danger)'  },
+                    { l:'Resultado',      v: fmtK(evolucao.reduce((s,e)=>s+(e.saldo||0),0)),     c:'var(--accent)'  },
+                  ].map((x,i) => (
+                    <div key={i} style={{textAlign:'center',padding:'10px',background:'rgba(255,255,255,0.02)',borderRadius:8}}>
+                      <div style={{fontSize:16,fontWeight:800,fontFamily:'var(--font-head)',color:x.c}}>{x.v}</div>
+                      <div style={{fontSize:11,color:'var(--text3)'}}>{x.l}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
         <div className="card">
           <div className="card-header">
             <span className="card-title">Distribuição Tributária</span>
-            <span className="badge badge-warn">18,5% receita</span>
+            {hasTrib && <span className="badge badge-warn">{fmt(totalTrib)} total</span>}
           </div>
           <div className="card-body">
-            <div className="donut-container">
-              <DonutChart segments={taxSeg} size={130} />
-              <div className="donut-legend">
-                {taxSeg.map((s, i) => (
-                  <div key={i} className="legend-item">
-                    <div className="legend-dot" style={{ background: s.color }} />
-                    <span className="legend-label">{s.label}</span>
-                    <span className="legend-value">R$ {s.val}K</span>
+            {!hasTrib ? (
+              <div className="empty">
+                <div style={{fontSize:28,marginBottom:8}}>⚖️</div>
+                <div>Importe NF-e para visualizar os tributos pagos.</div>
+              </div>
+            ) : (
+              <div className="donut-container">
+                <DonutChart segments={tribSeg} size={130} />
+                <div className="donut-legend">
+                  {tribSeg.map((s,i) => (
+                    <div key={i} className="legend-item">
+                      <div className="legend-dot" style={{background:s.color}}/>
+                      <span className="legend-label">{s.label}</span>
+                      <span className="legend-value">{fmt(s.val)}</span>
+                    </div>
+                  ))}
+                  <div className="divider" style={{margin:'8px 0'}}/>
+                  <div className="legend-item">
+                    <span className="legend-label" style={{fontWeight:600,color:'var(--text)'}}>Total</span>
+                    <span className="legend-value" style={{color:'var(--danger)'}}>{fmt(totalTrib)}</span>
                   </div>
-                ))}
-                <div className="divider" style={{ margin: "8px 0" }} />
-                <div className="legend-item">
-                  <span className="legend-label" style={{ fontWeight: 600, color: "var(--text)" }}>Total</span>
-                  <span className="legend-value" style={{ color: "var(--danger)" }}>R$ 1.691K</span>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Bottom row */}
+      {/* Últimas movimentações + Saúde */}
       <div className="grid-2 fade-up fade-up-4">
         <div className="card">
           <div className="card-header">
             <span className="card-title">Últimas Movimentações</span>
-            <button className="btn btn-ghost" style={{ fontSize: 11 }}>Ver todas</button>
+            <button className="btn btn-ghost" style={{fontSize:11}} onClick={() => openForm?.('lancamento')}>+ Novo</button>
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Descrição</th><th>Data</th><th>Valor</th></tr></thead>
-              <tbody>
-                {transactions.slice(0, 5).map(t => (
-                  <tr key={t.id}>
-                    <td><div className="primary" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.desc}</div><div style={{ fontSize: 11, color: "var(--text3)" }}>{t.cat}</div></td>
-                    <td>{t.date}</td>
-                    <td className={`money ${t.val > 0 ? "pos" : "neg"}`}>{t.val > 0 ? "+" : ""}{fmt(t.val)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {evolucao.length === 0 ? (
+            <div className="empty">Nenhum lançamento ainda.</div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Saldo</th></tr></thead>
+                <tbody>
+                  {[...evolucao].reverse().slice(0,6).map((e,i) => (
+                    <tr key={i}>
+                      <td className="primary">{e.mes}/{new Date().getFullYear()}</td>
+                      <td className="money pos">+{fmtK(e.entradas||0)}</td>
+                      <td className="money neg">-{fmtK(e.saidas||0)}</td>
+                      <td className={`money ${(e.saldo||0)>=0?'pos':'neg'}`}>{fmtK(e.saldo||0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="card">
           <div className="card-header">
-            <span className="card-title">Saúde Empresarial</span>
-            <span className="badge badge-success">Excelente</span>
+            <span className="card-title">Saúde Financeira</span>
+            <span className={`badge ${saldo>=0?'badge-success':'badge-danger'}`}>{saldo>=0?'Positivo':'Atenção'}</span>
           </div>
           <div className="card-body">
             <div className="flex items-center gap-16 mb-16">
-              <ScoreRing score={784} size={130} />
-              <div style={{ flex: 1 }}>
+              <ScoreRing score={calcScore(entradas, saidas, aPagar, aReceber)} size={130} />
+              <div style={{flex:1}}>
                 {[
-                  { label: "Liquidez Corrente", val: 2.4, pct: 80, c: "var(--success)" },
-                  { label: "Margem Líquida",   val: "28%", pct: 70, c: "var(--accent2)" },
-                  { label: "Giro do Ativo",     val: 1.8,  pct: 60, c: "var(--accent4)" },
-                  { label: "Endividamento",     val: "32%", pct: 32, c: "var(--warn)" },
-                ].map((item, i) => (
+                  { label:'Receita vs Despesa', val: entradas>0 ? `${Math.round((entradas/(entradas+saidas||1))*100)}%` : '—', pct: entradas>0 ? Math.round((entradas/(entradas+saidas||1))*100) : 0, c:'var(--success)' },
+                  { label:'Cobertura Pagamentos', val: saidas>0 ? `${(entradas/saidas||0).toFixed(1)}x` : '—', pct: Math.min(Math.round((entradas/(saidas||1))*50),100), c:'var(--accent2)' },
+                  { label:'Pendências a Pagar',  val: fmtK(aPagar),   pct: aPagar>0 ? Math.min(Math.round((aPagar/entradas||0)*100),100) : 0, c:'var(--warn)' },
+                  { label:'A Receber',           val: fmtK(aReceber), pct: Math.min(Math.round((aReceber/(entradas||1))*100),100), c:'var(--accent4)' },
+                ].map((item,i) => (
                   <div key={i} className="mb-12">
                     <div className="flex justify-between mb-4">
                       <span className="text-sm text-muted">{item.label}</span>
                       <span className="text-sm font-bold">{item.val}</span>
                     </div>
                     <div className="progress">
-                      <div className="progress-fill" style={{ width: `${item.pct}%`, background: item.c }} />
+                      <div className="progress-fill" style={{width:`${item.pct}%`,background:item.c}}/>
                     </div>
                   </div>
                 ))}
@@ -814,6 +912,15 @@ function Dashboard() {
   );
 }
 
+function calcScore(entradas, saidas, aPagar, aReceber) {
+  let score = 500;
+  if (entradas > 0) score += 100;
+  if (entradas > saidas) score += 150;
+  if (aPagar < entradas * 0.3) score += 100;
+  if (aReceber > 0) score += 50;
+  if (saidas === 0 && entradas === 0) score = 400;
+  return Math.min(score, 950);
+}
 function Financeiro({ empresaId, openForm, recarregar }) {
   const [tab, setTab]               = useState(0);
   const [lancamentos, setLancamentos] = useState([]);

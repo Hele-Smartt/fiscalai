@@ -34,7 +34,16 @@ export default function NovoCliente({ onBack, onSaved, tipo = 'cliente', editDat
     if (!form.nome) { setErro('Nome é obrigatório.'); return }
     setLoading(true); setErro('')
 
-    const dados = { ...form, empresa_id: empresa.id }
+    const dados = {
+      ...form,
+      empresa_id: empresa.id,
+      // Converte limite_credito para número ou null
+      limite_credito: form.limite_credito !== '' ? parseFloat(form.limite_credito) : null,
+    }
+    // Remove campos que não existem em fornecedores
+    if (!isCliente) {
+      delete dados.limite_credito
+    }
     const service = isCliente ? Clientes : Fornecedores
 
     const { error } = editData

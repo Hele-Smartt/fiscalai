@@ -1799,6 +1799,180 @@ function Estrategico() {
   );
 }
 
+function ClientesFornecedores({ empresaId, openForm }) {
+  const [aba, setAba]         = useState('clientes');
+  const [lista, setLista]     = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca]     = useState('');
+  const [editando, setEditando] = useState(null);
+
+  useEffect(() => { if (empresaId) carregar(); }, [empresaId, aba]);
+
+  async function carregar() {
+    setLoading(true);
+    const { data } = aba === 'clientes'
+      ? await Clientes.listar(empresaId)
+      : await Fornecedores.listar(empresaId);
+    setLista(data || []);
+    setLoading(false);
+  }
+
+  async function excluir(id) {
+    if (!confirm(`Excluir este ${aba === 'clientes' ? 'cliente' : 'fornecedor'}?`)) return;
+    if (aba === 'clientes') await Clientes.deletar(id);
+    else await Fornecedores.deletar(id);
+    carregar();
+  }
+
+  const filtrado = lista.filter(i =>
+    i.nome?.toLowerCase().includes(busca.toLowerCase()) ||
+    i.cpf_cnpj?.includes(busca) ||
+    i.email?.toLowerCase().includes(busca.toLowerCase())
+  );
+
+  // Se estiver editando, mostra formulário
+  if (editando) return (
+    <NovoCliente
+      tipo={aba === 'clientes' ? 'cliente' : 'fornecedor'}
+      editData={editando}
+      onBack={() => setEditando(null)}
+      onSaved={() => { setEditando(null); carregar(); }}
+    />
+  );
+
+  return (
+    <div className="fade-up">
+      <div className="section-header mb-20">
+        <div>
+          <div className="section-title">Clientes & Fornecedores</div>
+          <div className="section-sub">Gestão de contatos comerciais</div>
+        </div>
+        <div className="flex gap-8">
+          <button className="btn btn-ghost" onClick={carregar}>🔄 Atualizar</button>
+          <button className="btn btn-primary" onClick={() => openForm?.(aba === 'clientes' ? 'cliente' : 'fornecedor')}>
+            + {aba === 'clientes' ? 'Cliente' : 'Fornecedor'}
+          </button>
+        </div>
+      </div>
+
+      {/* Abas */}
+      <div className="tabs mb-20">
+        <div className={`tab ${aba==='clientes'?'active':''}`} onClick={() => { setAba('clientes'); setBusca(''); }}>👥 Clientes</div>
+        <div className={`tab ${aba==='fornecedores'?'active':''}`} onClick={() => { setAba('fornecedores'); setBusca(''); }}>🏢 Fornecedores</div>
+      </div>
+
+      {/* Métricas */}
+      <div className="metrics-grid mb-16">
+        {aba === 'clientes' ? [
+          { label: "Total Clientes",   val: lista.length,                                           c: "var(--accent2)" },
+          { label: "Pessoa Jurídica",  val: lista.filter(c=>c.tipo==='pj').length,                  c: "var(--accent)"  },
+          { label: "Pessoa Física",    val: lista.filter(c=>c.tipo==='pf').length,                  c: "var(--accent4)" },
+          { label: "Com Limite Créd.", val: lista.filter(c=>c.limite_credito>0).length,             c: "var(--success)" },
+        ] : [
+          { label: "Total Fornecedores", val: lista.length,                                         c: "var(--accent2)" },
+          { label: "Serviços",           val: lista.filter(f=>f.categoria==='Serviços').length,     c: "var(--accent)"  },
+          { label: "Produtos",           val: lista.filter(f=>f.categoria==='Produtos').length,     c: "var(--accent4)" },
+          { label: "Tecnologia",         val: lista.filter(f=>f.categoria==='Tecnologia').length,   c: "var(--success)" },
+        ].map((m,i) => (
+          <div key={i} className="metric-card" style={{"--accent-color":m.c}}>
+            <div className="metric-label">{m.label}</div>
+            <div className="metric-value" style={{color:m.c}}>{m.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Busca + lista */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">{aba === 'clientes' ? 'Clientes Cadastrados' : 'Fornecedores Cadastrados'}</span>
+          <input
+            className="inp" placeholder="🔍 Buscar por nome, CNPJ, e-mail..."
+            style={{width:280}} value={busca} onChange={e => setBusca(e.target.value)}
+          />
+        </div>
+
+        {loading ? (
+          <div className="empty">Carregando...</div>
+        ) : filtrado.length === 0 ? (
+          <div className="empty">
+            <div style={{fontSize:36,marginBottom:12}}>{aba==='clientes'?'👥':'🏢'}</div>
+            <div style={{fontSize:15,fontWeight:600,color:'var(--text2)',marginBottom:6}}>
+              {busca ? 'Nenhum resultado encontrado' : `Nenhum ${aba==='clientes'?'cliente':'fornecedor'} cadastrado`}
+            </div>
+            <div style={{fontSize:13,color:'var(--text3)',marginBottom:16}}>
+              {busca ? 'Tente outro termo de busca.' : `Cadastre o primeiro ${aba==='clientes'?'cliente':'fornecedor'} para começar.`}
+            </div>
+            {!busca && (
+              <button className="btn btn-primary" onClick={() => openForm?.(aba==='clientes'?'cliente':'fornecedor')}>
+                + Cadastrar {aba==='clientes'?'Cliente':'Fornecedor'}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>{aba==='clientes'?'Tipo':'Categoria'}</th>
+                  <th>CNPJ / CPF</th>
+                  <th>Contato</th>
+                  <th>Cidade/UF</th>
+                  {aba==='clientes' && <th>Limite Crédito</th>}
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtrado.map(item => (
+                  <tr key={item.id}>
+                    <td>
+                      <div className="primary">{item.nome}</div>
+                      {item.email && <div style={{fontSize:11,color:'var(--text3)'}}>{item.email}</div>}
+                    </td>
+                    <td>
+                      {aba==='clientes'
+                        ? <span className={`badge ${item.tipo==='pj'?'badge-info':'badge-purple'}`}>{item.tipo==='pj'?'🏢 PJ':'👤 PF'}</span>
+                        : <span className="badge badge-info">{item.categoria || '—'}</span>
+                      }
+                    </td>
+                    <td style={{color:'var(--text3)',fontSize:12}}>{item.cpf_cnpj || '—'}</td>
+                    <td style={{fontSize:12}}>
+                      {item.telefone
+                        ? <a href={`https://wa.me/55${item.telefone.replace(/\D/g,'')}`} target="_blank" style={{color:'var(--accent)',textDecoration:'none'}}>📱 {item.telefone}</a>
+                        : <span style={{color:'var(--text3)'}}>—</span>
+                      }
+                    </td>
+                    <td style={{fontSize:12,color:'var(--text2)'}}>{item.cidade && item.estado ? `${item.cidade}/${item.estado}` : '—'}</td>
+                    {aba==='clientes' && (
+                      <td className={`money ${item.limite_credito>0?'pos':''}`}>
+                        {item.limite_credito > 0 ? fmt(item.limite_credito) : '—'}
+                      </td>
+                    )}
+                    <td>
+                      <div className="flex gap-8">
+                        <button className="btn btn-ghost btn-icon" title="Editar" style={{fontSize:13}} onClick={() => setEditando(item)}>✏️</button>
+                        <button className="btn btn-ghost btn-icon" title="Excluir" style={{fontSize:13,color:'var(--danger)'}} onClick={() => excluir(item.id)}>🗑</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Rodapé com contagem */}
+        {filtrado.length > 0 && (
+          <div style={{padding:'12px 20px',borderTop:'1px solid var(--border)',fontSize:12,color:'var(--text3)',display:'flex',justifyContent:'space-between'}}>
+            <span>{filtrado.length} {aba==='clientes'?'cliente(s)':'fornecedor(es)'} {busca?'encontrado(s)':'cadastrado(s)'}</span>
+            <span>Atualizado agora</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Configuracoes() {
   return (
     <div className="fade-up">
@@ -1886,6 +2060,7 @@ const NAV = [
     { id: "relatorios",  label: "Relatórios",           icon: "📄", badge: null },
   ]},
   { section: "Sistema", items: [
+    { id: "contatos",    label: "Clientes & Fornec.",   icon: "👥", badge: null },
     { id: "config",      label: "Configurações",        icon: "⚙️", badge: null },
   ]},
 ];
@@ -1898,6 +2073,7 @@ const TITLES = {
   ia: "IA Tributária",
   estrategico: "Mapeamento Estratégico",
   relatorios: "Relatórios",
+  contatos: "Clientes & Fornecedores",
   config: "Configurações",
 };
 
@@ -1906,7 +2082,7 @@ function AppLegacy() {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
 
-  const PAGES = { dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario, creditos: Creditos, ia: IAChat, estrategico: Estrategico, relatorios: Relatorios, config: Configuracoes };
+  const PAGES = { dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario, creditos: Creditos, ia: IAChat, estrategico: Estrategico, relatorios: Relatorios, contatos: ClientesFornecedores, config: Configuracoes };
   const Page = PAGES[page] || Dashboard;
 
   return (
@@ -2134,7 +2310,7 @@ function AppWithForms() {
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
-    relatorios: Relatorios, config: Configuracoes,
+    relatorios: Relatorios, contatos: ClientesFornecedores, config: Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;
   const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';

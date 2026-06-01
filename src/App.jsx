@@ -4,6 +4,7 @@ import NovoLancamento from "./pages/forms/NovoLancamento";
 import NovaContaPagar from "./pages/forms/NovaContaPagar";
 import NovaContaReceber from "./pages/forms/NovaContaReceber";
 import ImportarNFe from "./pages/ImportarNFe";
+import RelatoriosPage from "./pages/Relatorios";
 import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
@@ -2085,7 +2086,7 @@ function AppLegacy() {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
 
-  const PAGES = { dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario, creditos: Creditos, ia: IAChat, estrategico: Estrategico, relatorios: Relatorios, contatos: ClientesFornecedores, config: Configuracoes };
+  const PAGES = { dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario, creditos: Creditos, ia: IAChat, estrategico: Estrategico, relatorios: RelatoriosPage, contatos: ClientesFornecedores, config: Configuracoes };
   const Page = PAGES[page] || Dashboard;
 
   return (
@@ -2180,7 +2181,7 @@ function App() {
     creditos:   Creditos,
     ia:         IAChat,
     estrategico: Estrategico,
-    relatorios: Relatorios,
+    relatorios: RelatoriosPage,
     config:     Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;
@@ -2313,7 +2314,7 @@ function AppWithForms() {
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
-    relatorios: Relatorios, nfe: ImportarNFe, contatos: ClientesFornecedores, config: Configuracoes,
+    relatorios: RelatoriosPage, nfe: ImportarNFe, contatos: ClientesFornecedores, config: Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;
   const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';

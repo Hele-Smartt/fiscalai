@@ -3,6 +3,7 @@ import { useAuth } from "./lib/AuthContext";
 import NovoLancamento from "./pages/forms/NovoLancamento";
 import NovaContaPagar from "./pages/forms/NovaContaPagar";
 import NovaContaReceber from "./pages/forms/NovaContaReceber";
+import ImportarNFe from "./pages/ImportarNFe";
 import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
@@ -2057,6 +2058,7 @@ const NAV = [
   { section: "Inteligência", items: [
     { id: "ia",          label: "IA Tributária",       icon: "🤖", badge: null },
     { id: "estrategico", label: "Estratégico",          icon: "🎯", badge: null },
+    { id: "nfe",        label: "Importar NF-e",        icon: "📋", badge: null },
     { id: "relatorios",  label: "Relatórios",           icon: "📄", badge: null },
   ]},
   { section: "Sistema", items: [
@@ -2073,6 +2075,7 @@ const TITLES = {
   ia: "IA Tributária",
   estrategico: "Mapeamento Estratégico",
   relatorios: "Relatórios",
+  nfe: "Importar NF-e",
   contatos: "Clientes & Fornecedores",
   config: "Configurações",
 };
@@ -2310,7 +2313,7 @@ function AppWithForms() {
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
-    relatorios: Relatorios, contatos: ClientesFornecedores, config: Configuracoes,
+    relatorios: Relatorios, nfe: ImportarNFe, contatos: ClientesFornecedores, config: Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;
   const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';
@@ -2336,6 +2339,7 @@ function AppWithForms() {
       case 'conta-receber':   return <NovaContaReceber  {...props} />;
       case 'cliente':         return <NovoCliente       {...props} tipo="cliente"    />;
       case 'fornecedor':      return <NovoCliente       {...props} tipo="fornecedor" />;
+      case 'nfe':             return <ImportarNFe       {...props} />;
       default: return null;
     }
   };
@@ -2377,6 +2381,7 @@ function AppWithForms() {
                 { label: '+ A Receber',     form: 'conta-receber' },
                 { label: '+ Cliente',       form: 'cliente'       },
                 { label: '+ Fornecedor',    form: 'fornecedor'    },
+                { label: '+ Importar NF-e', form: 'nfe'           },
               ].map(i => (
                 <div key={i.form}
                   className={`nav-item ${formPage === i.form ? 'active' : ''}`}

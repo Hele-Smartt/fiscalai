@@ -6,6 +6,7 @@ import NovaContaReceber from "./pages/forms/NovaContaReceber";
 import ImportarNFe from "./pages/ImportarNFe";
 import RelatoriosPage from "./pages/Relatorios";
 import Usuarios from "./pages/Usuarios";
+import ConciliacaoBancaria from "./pages/ConciliacaoBancaria";
 import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
@@ -2061,6 +2062,7 @@ const NAV = [
     { id: "ia",          label: "IA Tributária",       icon: "🤖", badge: null },
     { id: "estrategico", label: "Estratégico",          icon: "🎯", badge: null },
     { id: "nfe",        label: "Importar NF-e",        icon: "📋", badge: null },
+    { id: "conciliacao", label: "Conciliação Banc.",     icon: "🏦", badge: null },
     { id: "relatorios",  label: "Relatórios",           icon: "📄", badge: null },
   ]},
   { section: "Sistema", items: [
@@ -2079,6 +2081,7 @@ const TITLES = {
   estrategico: "Mapeamento Estratégico",
   relatorios: "Relatórios",
   nfe: "Importar NF-e",
+  conciliacao: "Conciliação Bancária",
   usuarios: "Usuários & Permissões",
   contatos: "Clientes & Fornecedores",
   config: "Configurações",
@@ -2317,7 +2320,7 @@ function AppWithForms() {
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
-    relatorios: RelatoriosPage, nfe: ImportarNFe, contatos: ClientesFornecedores, usuarios: Usuarios, config: Configuracoes,
+    relatorios: RelatoriosPage, nfe: ImportarNFe, conciliacao: ConciliacaoBancaria, contatos: ClientesFornecedores, usuarios: Usuarios, config: Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;
   const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';
@@ -2343,6 +2346,7 @@ function AppWithForms() {
       case 'conta-receber':   return <NovaContaReceber  {...props} />;
       case 'cliente':         return <NovoCliente       {...props} tipo="cliente"    />;
       case 'fornecedor':      return <NovoCliente       {...props} tipo="fornecedor" />;
+      case 'conciliacao':    return <ConciliacaoBancaria {...props} />;
       case 'nfe':             return <ImportarNFe       {...props} />;
       default: return null;
     }
@@ -2386,6 +2390,7 @@ function AppWithForms() {
                 { label: '+ Cliente',       form: 'cliente'       },
                 { label: '+ Fornecedor',    form: 'fornecedor'    },
                 { label: '+ Importar NF-e', form: 'nfe'           },
+                { label: '+ Conciliar',     form: 'conciliacao'   },
               ].map(i => (
                 <div key={i.form}
                   className={`nav-item ${formPage === i.form ? 'active' : ''}`}

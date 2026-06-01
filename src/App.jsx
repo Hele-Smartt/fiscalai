@@ -5,6 +5,7 @@ import NovaContaPagar from "./pages/forms/NovaContaPagar";
 import NovaContaReceber from "./pages/forms/NovaContaReceber";
 import ImportarNFe from "./pages/ImportarNFe";
 import RelatoriosPage from "./pages/Relatorios";
+import Usuarios from "./pages/Usuarios";
 import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
@@ -2064,6 +2065,7 @@ const NAV = [
   ]},
   { section: "Sistema", items: [
     { id: "contatos",    label: "Clientes & Fornec.",   icon: "👥", badge: null },
+    { id: "usuarios",    label: "Usuários",               icon: "👥", badge: null },
     { id: "config",      label: "Configurações",        icon: "⚙️", badge: null },
   ]},
 ];
@@ -2077,6 +2079,7 @@ const TITLES = {
   estrategico: "Mapeamento Estratégico",
   relatorios: "Relatórios",
   nfe: "Importar NF-e",
+  usuarios: "Usuários & Permissões",
   contatos: "Clientes & Fornecedores",
   config: "Configurações",
 };
@@ -2314,7 +2317,7 @@ function AppWithForms() {
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
-    relatorios: RelatoriosPage, nfe: ImportarNFe, contatos: ClientesFornecedores, config: Configuracoes,
+    relatorios: RelatoriosPage, nfe: ImportarNFe, contatos: ClientesFornecedores, usuarios: Usuarios, config: Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;
   const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n => n[0]).join('').toUpperCase() || '??';

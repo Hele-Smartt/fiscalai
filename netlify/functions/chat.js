@@ -1,6 +1,6 @@
 // netlify/functions/chat.js
 // Proxy seguro para a API Anthropic
-// Suporta mensagens de texto e arquivos (PDF/imagem) via base64
+// Suporta texto, imagens (base64) e PDFs
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -25,50 +25,65 @@ exports.handler = async (event) => {
   }
 
   try {
-    // Monta o conteúdo da mensagem
     let content
+    const isPdf   = arquivo?.mediaType === 'application/pdf'
+    const isImage = arquivo?.mediaType?.startsWith('image/')
 
-    if (arquivo?.base64 && arquivo?.mediaType) {
-      // Mensagem com arquivo (PDF ou imagem)
-      const isPdf = arquivo.mediaType === 'application/pdf'
+    if (arquivo?.base64 && isPdf) {
       content = [
         {
-          type: isPdf ? 'document' : 'image',
+          type: 'document',
           source: {
             type: 'base64',
-            media_type: arquivo.mediaType,
+            media_type: 'application/pdf',
+            data: arquivo.base64,
+          },
+        },
+        { type: 'text', text: message },
+      ]
+    } else if (arquivo?.base64 && isImage) {
+      const mediaType = ['image/jpeg','image/png','image/gif','image/webp'].includes(arquivo.mediaType)
+        ? arquivo.mediaType : 'image/jpeg'
+      content = [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mediaType,
             data: arquivo.base64,
           },
         },
         { type: 'text', text: message },
       ]
     } else {
-      // Mensagem de texto simples
       content = message
     }
 
+    // Headers — adiciona beta só para PDF
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    }
+    if (isPdf) headers['anthropic-beta'] = 'pdfs-2024-09-25'
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
+      headers,
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        max_tokens: 1500,
         system:
-          'Você é uma IA especialista em tributação brasileira, finanças empresariais e planejamento fiscal. ' +
-          'Responda de forma técnica, precisa e objetiva. Use linguagem profissional. ' +
-          'Formate usando **negrito** para destaques. Inclua valores estimados quando relevante. ' +
-          'Quando receber uma NF-e (PDF ou imagem), extraia os dados e responda APENAS com JSON válido.',
+          'Você é especialista em tributação brasileira e leitura de Notas Fiscais. ' +
+          'Quando receber NF-e (PDF ou imagem), extraia os dados e responda APENAS com JSON válido, sem markdown, sem texto extra. ' +
+          'Para perguntas gerais, responda em português de forma técnica e objetiva com **negrito** para destaques.',
         messages: [{ role: 'user', content }],
       }),
     })
 
     if (!response.ok) {
-      const err = await response.text()
-      throw new Error(`Anthropic API error ${response.status}: ${err}`)
+      const errText = await response.text()
+      throw new Error(`Anthropic API ${response.status}: ${errText}`)
     }
 
     const data = await response.json()
@@ -83,10 +98,10 @@ exports.handler = async (event) => {
       body: JSON.stringify({ reply }),
     }
   } catch (err) {
-    console.error('Erro na Netlify Function:', err.message)
+    console.error('Erro na Function:', err.message)
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Erro interno: ' + err.message }),
+      body: JSON.stringify({ error: err.message }),
     }
   }
 }

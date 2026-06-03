@@ -1,74 +1,92 @@
 // netlify/functions/chat.js
-// Essa function roda no servidor da Netlify.
-// A variável ANTHROPIC_API_KEY é configurada no painel da Netlify (nunca exposta no frontend).
+// Proxy seguro para a API Anthropic
+// Suporta mensagens de texto e arquivos (PDF/imagem) via base64
 
 exports.handler = async (event) => {
-  // Só aceita POST
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "Method Not Allowed" }) };
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) }
   }
 
-  // Lê a chave de API do ambiente (configurada na Netlify)
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "ANTHROPIC_API_KEY não configurada nas variáveis de ambiente da Netlify." }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: 'ANTHROPIC_API_KEY não configurada.' }) }
   }
 
-  let message;
+  let body
   try {
-    const body = JSON.parse(event.body || "{}");
-    message = body.message;
-    if (!message) throw new Error("Campo 'message' ausente");
-  } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: "Body inválido: " + e.message }) };
+    body = JSON.parse(event.body || '{}')
+  } catch {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Body inválido' }) }
+  }
+
+  const { message, arquivo } = body
+  if (!message) {
+    return { statusCode: 400, body: JSON.stringify({ error: "Campo 'message' ausente" }) }
   }
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        system:
-          "Você é uma IA especialista em tributação brasileira, finanças empresariais e planejamento fiscal. " +
-          "Responda de forma técnica, precisa e objetiva. Use linguagem profissional. " +
-          "Formate usando **negrito** para destaques. Inclua valores estimados quando relevante. " +
-          "Base de conhecimento: Simples Nacional, Lucro Presumido, Lucro Real, PIS, COFINS, ICMS, " +
-          "ISS, IRPJ, CSLL, INSS, jurisprudência STF/STJ, legislação tributária brasileira atualizada.",
-        messages: [{ role: "user", content: message }],
-      }),
-    });
+    // Monta o conteúdo da mensagem
+    let content
 
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Anthropic API error ${response.status}: ${err}`);
+    if (arquivo?.base64 && arquivo?.mediaType) {
+      // Mensagem com arquivo (PDF ou imagem)
+      const isPdf = arquivo.mediaType === 'application/pdf'
+      content = [
+        {
+          type: isPdf ? 'document' : 'image',
+          source: {
+            type: 'base64',
+            media_type: arquivo.mediaType,
+            data: arquivo.base64,
+          },
+        },
+        { type: 'text', text: message },
+      ]
+    } else {
+      // Mensagem de texto simples
+      content = message
     }
 
-    const data = await response.json();
-    const reply = data.content?.[0]?.text || "Sem resposta da IA.";
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system:
+          'Você é uma IA especialista em tributação brasileira, finanças empresariais e planejamento fiscal. ' +
+          'Responda de forma técnica, precisa e objetiva. Use linguagem profissional. ' +
+          'Formate usando **negrito** para destaques. Inclua valores estimados quando relevante. ' +
+          'Quando receber uma NF-e (PDF ou imagem), extraia os dados e responda APENAS com JSON válido.',
+        messages: [{ role: 'user', content }],
+      }),
+    })
+
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(`Anthropic API error ${response.status}: ${err}`)
+    }
+
+    const data = await response.json()
+    const reply = data.content?.[0]?.text || 'Sem resposta.'
 
     return {
       statusCode: 200,
       headers: {
-        "Content-Type": "application/json",
-        // CORS — permite chamada do próprio site
-        "Access-Control-Allow-Origin": "*",
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ reply }),
-    };
+    }
   } catch (err) {
-    console.error("Erro na Netlify Function:", err.message);
+    console.error('Erro na Netlify Function:', err.message)
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: "Erro interno: " + err.message }),
-    };
+      body: JSON.stringify({ error: 'Erro interno: ' + err.message }),
+    }
   }
-};
+}

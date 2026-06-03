@@ -3,6 +3,13 @@
   publish   = "dist"
   functions = "netlify/functions"
 
+# Aumenta limite do body para suportar PDF/imagem em base64 (até 10MB)
+[functions]
+  node_bundler = "esbuild"
+
+[functions."chat"]
+  timeout = 30
+
 # SPA redirect
 [[redirects]]
   from   = "/*"

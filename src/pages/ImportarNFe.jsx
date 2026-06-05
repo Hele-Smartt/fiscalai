@@ -4,6 +4,7 @@
 
 import { useState, useRef } from 'react'
 import { useAuth } from '../lib/AuthContext'
+import { useCliente } from '../lib/ClienteContext'
 import { NotasFiscais, Lancamentos } from '../lib/db'
 import { supabase } from '../lib/supabase'
 
@@ -164,13 +165,17 @@ Estrutura esperada:
       }),
     })
 
-    if (!response.ok) throw new Error(`Erro HTTP ${response.status}`)
     const data = await response.json()
+    
+    // Verifica erro retornado pela função
+    if (data.error) throw new Error(data.error)
+    if (!response.ok) throw new Error(`Erro HTTP ${response.status}`)
+    
     const texto = data.reply || ''
 
     // Extrai JSON da resposta
     const jsonMatch = texto.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('IA não retornou JSON válido')
+    if (!jsonMatch) throw new Error('IA não conseguiu extrair dados do documento. Verifique se é um DANFE legível.')
     const parsed = JSON.parse(jsonMatch[0])
 
     return {
@@ -218,6 +223,7 @@ const fmtD = d => d ? new Date(d+'T12:00:00').toLocaleDateString('pt-BR') : '—
 // ── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
 export default function ImportarNFe({ onBack, onSaved }) {
   const { empresa, user } = useAuth()
+  const { clienteAtivo, clienteId } = useCliente()
   const [step,      setStep]      = useState(1)
   const [formato,   setFormato]   = useState('xml')
   const [drag,      setDrag]      = useState(false)
@@ -290,6 +296,24 @@ export default function ImportarNFe({ onBack, onSaved }) {
 
         if (!parsed.ok) throw new Error(parsed.erro)
 
+        // ── VALIDAÇÃO DO CNPJ ─────────────────────────────
+        // O CNPJ do cliente ativo deve constar na NF-e (emit ou dest)
+        if (clienteAtivo?.cnpj) {
+          const cnpjCliente = clienteAtivo.cnpj.replace(/\D/g, '')
+          const cnpjEmit    = (parsed.emit_cnpj || '').replace(/\D/g, '')
+          const cnpjDest    = (parsed.dest_cnpj || '').replace(/\D/g, '')
+          if (cnpjCliente && cnpjEmit && cnpjDest) {
+            if (cnpjCliente !== cnpjEmit && cnpjCliente !== cnpjDest) {
+              throw new Error(
+                `CNPJ do cliente ativo (${clienteAtivo.cnpj}) não encontrado na NF-e. ` +
+                `Emitente: ${parsed.emit_cnpj || 'não identificado'} | ` +
+                `Destinatário: ${parsed.dest_cnpj || 'não identificado'}. ` +
+                `Verifique se a NF-e pertence ao cliente "${clienteAtivo.nome}".`
+              )
+            }
+          }
+        }
+
         // Verifica duplicata pela chave
         if (parsed.chave_acesso) {
           const { data: exist } = await NotasFiscais.buscarPorChave(parsed.chave_acesso)
@@ -300,6 +324,7 @@ export default function ImportarNFe({ onBack, onSaved }) {
         const { data: nf, error: nfErr } = await NotasFiscais.criar({
           ...parsed, itens: undefined, ok: undefined, fonte: undefined,
           empresa_id: empresa.id, criado_por: user.id,
+          cliente_helevare_id: clienteId || null,
         })
         if (nfErr) throw new Error(nfErr.message)
 
@@ -386,6 +411,33 @@ export default function ImportarNFe({ onBack, onSaved }) {
             </>
           ))}
         </div>
+
+        {/* Aviso CNPJ do cliente ativo */}
+        {clienteAtivo ? (
+          <div style={{background:'rgba(0,212,160,0.06)',border:'1px solid rgba(0,212,160,0.2)',borderRadius:10,padding:'10px 16px',fontSize:12,marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:16}}>🏢</span>
+            <div>
+              <span style={{color:'var(--text2)'}}>Cliente ativo: </span>
+              <strong style={{color:'var(--accent)'}}>{clienteAtivo.nome}</strong>
+              {clienteAtivo.cnpj && (
+                <> — <span style={{color:'var(--text2)'}}>CNPJ: </span>
+                <strong style={{color:'var(--text)',fontFamily:'monospace'}}>{clienteAtivo.cnpj}</strong>
+                <span style={{color:'var(--text3)',fontSize:11,marginLeft:8}}>
+                  (deve constar na NF-e como emitente ou destinatário)
+                </span></>
+              )}
+              {!clienteAtivo.cnpj && (
+                <span style={{color:'var(--warn)',marginLeft:8}}>
+                  ⚠️ CNPJ não cadastrado — validação desabilitada
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{background:'rgba(255,184,0,0.08)',border:'1px solid rgba(255,184,0,0.2)',borderRadius:10,padding:'10px 16px',fontSize:12,color:'var(--warn)',marginBottom:16}}>
+            ⚠️ Nenhum cliente ativo selecionado. Volte à tela inicial e selecione um cliente.
+          </div>
+        )}
 
         {erro && <div style={{background:'rgba(255,71,87,0.08)',border:'1px solid rgba(255,71,87,0.2)',borderRadius:10,padding:'12px 16px',fontSize:13,color:'var(--danger)',marginBottom:16}}>⚠️ {erro}</div>}
 

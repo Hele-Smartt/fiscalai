@@ -1,7 +1,4 @@
 // netlify/functions/chat.js
-// Proxy seguro para a API Anthropic
-// Suporta texto, imagens (base64) e PDFs
-
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) }
@@ -25,19 +22,24 @@ exports.handler = async (event) => {
   }
 
   try {
-    let content
     const isPdf   = arquivo?.mediaType === 'application/pdf'
     const isImage = arquivo?.mediaType?.startsWith('image/')
 
+    let content
+
     if (arquivo?.base64 && isPdf) {
+      // PDF — verifica tamanho (base64 de 4MB PDF = ~5.3MB string)
+      if (arquivo.base64.length > 5_000_000) {
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+          body: JSON.stringify({ error: 'PDF muito grande. Reduza o arquivo para menos de 4MB.' })
+        }
+      }
       content = [
         {
           type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: arquivo.base64,
-          },
+          source: { type: 'base64', media_type: 'application/pdf', data: arquivo.base64 },
         },
         { type: 'text', text: message },
       ]
@@ -47,11 +49,7 @@ exports.handler = async (event) => {
       content = [
         {
           type: 'image',
-          source: {
-            type: 'base64',
-            media_type: mediaType,
-            data: arquivo.base64,
-          },
+          source: { type: 'base64', media_type: mediaType, data: arquivo.base64 },
         },
         { type: 'text', text: message },
       ]
@@ -59,7 +57,6 @@ exports.handler = async (event) => {
       content = message
     }
 
-    // Headers — adiciona beta só para PDF
     const headers = {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
@@ -72,18 +69,24 @@ exports.handler = async (event) => {
       headers,
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1500,
+        max_tokens: 2000,
         system:
-          'Você é especialista em tributação brasileira e leitura de Notas Fiscais. ' +
-          'Quando receber NF-e (PDF ou imagem), extraia os dados e responda APENAS com JSON válido, sem markdown, sem texto extra. ' +
-          'Para perguntas gerais, responda em português de forma técnica e objetiva com **negrito** para destaques.',
+          'Você é especialista em tributação brasileira e leitura de Notas Fiscais (NF-e/DANFE). ' +
+          'Quando receber um PDF ou imagem de NF-e/DANFE, extraia TODOS os dados disponíveis. ' +
+          'Responda APENAS com JSON válido e nada mais. Sem markdown, sem texto extra, sem explicações. ' +
+          'Se não conseguir ler algum campo, use null.',
         messages: [{ role: 'user', content }],
       }),
     })
 
     if (!response.ok) {
       const errText = await response.text()
-      throw new Error(`Anthropic API ${response.status}: ${errText}`)
+      console.error('Anthropic API error:', response.status, errText)
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: `Erro na API: ${response.status} — ${errText.slice(0,200)}` })
+      }
     }
 
     const data = await response.json()
@@ -91,17 +94,15 @@ exports.handler = async (event) => {
 
     return {
       statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({ reply }),
     }
   } catch (err) {
     console.error('Erro na Function:', err.message)
     return {
-      statusCode: 500,
-      body: JSON.stringify({ error: err.message }),
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ error: 'Erro interno: ' + err.message }),
     }
   }
 }

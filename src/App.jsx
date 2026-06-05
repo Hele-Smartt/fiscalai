@@ -2319,7 +2319,7 @@ function AppWithForms() {
   const openForm = (f)  => setFormPage(f);
   const closeForm = ()  => { setFormPage(null); carregarDados(); };
 
-  const pageProps = { empresa, empresaId: empresa?.id, clienteId: clienteId||null, dbData, recarregar: carregarDados, openForm };
+  const pageProps = { empresa, empresaId: empresa?.id, clienteId: null, dbData, recarregar: carregarDados, openForm };
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,

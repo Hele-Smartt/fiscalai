@@ -1,11 +1,13 @@
 // src/pages/forms/NovaContaReceber.jsx
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../lib/AuthContext'
+import { useCliente } from '../../lib/ClienteContext'
 import { ContasReceber, Categorias, Clientes } from '../../lib/db'
 import { FORM_CSS, Field, Input, Select, ValorInput } from './FormComponents'
 
 export default function NovaContaReceber({ onBack, onSaved, editData = null }) {
   const { empresa } = useAuth()
+  const { clienteId } = useCliente()
   const [loading,    setLoading]    = useState(false)
   const [sucesso,    setSucesso]    = useState(false)
   const [erro,       setErro]       = useState('')
@@ -41,6 +43,7 @@ export default function NovaContaReceber({ onBack, onSaved, editData = null }) {
     const dados = {
       ...form,
       empresa_id:   empresa.id,
+      cliente_helevare_id: clienteId || null,
       valor:        parseFloat(form.valor),
       cliente_id:   form.cliente_id   || null,
       categoria_id: form.categoria_id || null,

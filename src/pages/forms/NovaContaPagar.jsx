@@ -1,11 +1,13 @@
 // src/pages/forms/NovaContaPagar.jsx
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../lib/AuthContext'
+import { useCliente } from '../../lib/ClienteContext'
 import { ContasPagar, Categorias, Fornecedores } from '../../lib/db'
 import { FORM_CSS, Field, Input, Select, Textarea, ValorInput } from './FormComponents'
 
 export default function NovaContaPagar({ onBack, onSaved, editData = null }) {
   const { empresa } = useAuth()
+  const { clienteId } = useCliente()
   const [loading,      setLoading]      = useState(false)
   const [sucesso,      setSucesso]      = useState(false)
   const [erro,         setErro]         = useState('')
@@ -42,6 +44,7 @@ export default function NovaContaPagar({ onBack, onSaved, editData = null }) {
     const dados = {
       ...form,
       empresa_id:    empresa.id,
+      cliente_helevare_id: clienteId || null,
       valor:         parseFloat(form.valor),
       fornecedor_id: form.fornecedor_id || null,
       categoria_id:  form.categoria_id  || null,

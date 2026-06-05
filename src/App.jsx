@@ -2107,6 +2107,7 @@ function AppWithFormsAndCliente() {
   const { user, perfil, empresa, loading, logout } = useAuth();
   const { clienteAtivo, clienteId } = useCliente();
   const { selecionarCliente } = useCliente();
+  const [page,        setPage]        = useState("dashboard");
   const [formPage,    setFormPage]    = useState(null);
   const [collapsed,   setCollapsed]   = useState(false);
   const [dbData,      setDbData]      = useState({});

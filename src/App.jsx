@@ -2094,7 +2094,8 @@ const TITLES = {
 
 export default function AppRoot() {
   const { user, empresa, loading } = useAuth();
-  if (loading || !user) return <AppWithForms />;
+  if (loading) return <div style={{height:"100vh",background:"#080C14"}} />;
+  if (!user) return <Login />;
   return (
     <ClienteProvider empresaId={empresa?.id}>
       <AppWithFormsAndCliente />

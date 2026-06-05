@@ -7,6 +7,9 @@ import ImportarNFe from "./pages/ImportarNFe";
 import RelatoriosPage from "./pages/Relatorios";
 import Usuarios from "./pages/Usuarios";
 import ConciliacaoBancaria from "./pages/ConciliacaoBancaria";
+import { ClienteProvider, useCliente } from "./lib/ClienteContext";
+import TelaInicial from "./pages/TelaInicial";
+import ClienteBar from "./components/ClienteBar";
 import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
@@ -659,7 +662,7 @@ function ScoreRing({ score, size = 140 }) {
 
 // ─── MODULES ─────────────────────────────────────────────────────────────────
 
-function Dashboard({ empresaId, openForm, recarregar }) {
+function Dashboard({ empresaId, clienteId, openForm, recarregar }) {
   const [dados,   setDados]   = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -925,7 +928,7 @@ function calcScore(entradas, saidas, aPagar, aReceber) {
   if (saidas === 0 && entradas === 0) score = 400;
   return Math.min(score, 950);
 }
-function Financeiro({ empresaId, openForm, recarregar }) {
+function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   const [tab, setTab]               = useState(0);
   const [lancamentos, setLancamentos] = useState([]);
   const [contasPagar, setContasPagar] = useState([]);
@@ -948,9 +951,9 @@ function Financeiro({ empresaId, openForm, recarregar }) {
     const mes = new Date().toISOString().slice(0,7);
     if (tab === 0 || tab === 1) {
       const [lRes, fluxoRes, evRes] = await Promise.all([
-        Lancamentos.listar(empresaId, { limite: 20 }),
-        Lancamentos.resumoMes(empresaId, mes),
-        Lancamentos.evolucao12Meses(empresaId),
+        Lancamentos.listar(empresaId, { limite: 20 }, clienteId),
+        Lancamentos.resumoMes(empresaId, mes, clienteId),
+        Lancamentos.evolucao12Meses(empresaId, clienteId),
       ]);
       setLancamentos(lRes.data || []);
       setFluxo(fluxoRes);
@@ -959,7 +962,7 @@ function Financeiro({ empresaId, openForm, recarregar }) {
     if (tab === 2) {
       const [res, tot] = await Promise.all([
         ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
-        ContasPagar.totais(empresaId),
+        ContasPagar.totais(empresaId, clienteId),
       ]);
       setContasPagar(res.data || []);
       setTotaisPagar(tot);
@@ -967,7 +970,7 @@ function Financeiro({ empresaId, openForm, recarregar }) {
     if (tab === 3) {
       const [res, tot] = await Promise.all([
         ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
-        ContasReceber.totais(empresaId),
+        ContasReceber.totais(empresaId, clienteId),
       ]);
       setContasReceber(res.data || []);
       setTotaisReceber(tot);
@@ -2103,7 +2106,7 @@ function AppLegacy() {
         <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
           <div className="sidebar-logo">
             <div className="logo-icon">⚡</div>
-            {!collapsed && <div className="logo-text">Fiscal<span>AI</span></div>}
+            {!collapsed && <div className="logo-text">HElevare<span>.Financeiro</span></div>}
           </div>
 
           {NAV.map((sec, si) => (
@@ -2214,7 +2217,7 @@ function App() {
         <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
           <div className="sidebar-logo">
             <div className="logo-icon">⚡</div>
-            {!collapsed && <div className="logo-text">Fiscal<span>AI</span></div>}
+            {!collapsed && <div className="logo-text">HElevare<span>.Financeiro</span></div>}
           </div>
 
           {NAV.map((sec, si) => (
@@ -2292,7 +2295,7 @@ function App() {
 
 // ─── ROUTER DE FORMULÁRIOS ────────────────────────────────────────────────────
 // Injeta navegação para formulários no App existente
-export { AppWithForms as default }
+export { AppRoot as default }
 
 function AppWithForms() {
   const { user, perfil, empresa, loading, logout } = useAuth();
@@ -2305,7 +2308,7 @@ function AppWithForms() {
   const carregarDados = useCallback(async () => {
     if (!empresa?.id) return;
     setDbLoading(true);
-    try { const r = await DashboardDB.resumo(empresa.id); setDbData(r); }
+    try { const r = await DashboardDB.resumo(empresa.id, clienteId||null); setDbData(r); }
     catch(e) { console.error(e); }
     setDbLoading(false);
   }, [empresa?.id]);
@@ -2316,7 +2319,7 @@ function AppWithForms() {
   const openForm = (f)  => setFormPage(f);
   const closeForm = ()  => { setFormPage(null); carregarDados(); };
 
-  const pageProps = { empresa, empresaId: empresa?.id, dbData, recarregar: carregarDados, openForm };
+  const pageProps = { empresa, empresaId: empresa?.id, clienteId: clienteId||null, dbData, recarregar: carregarDados, openForm };
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
@@ -2359,7 +2362,7 @@ function AppWithForms() {
         <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
           <div className="sidebar-logo">
             <div className="logo-icon">⚡</div>
-            {!collapsed && <div className="logo-text">Fiscal<span>AI</span></div>}
+            {!collapsed && <div className="logo-text">HElevare<span>.Financeiro</span></div>}
           </div>
 
           {NAV.map((sec, si) => (
@@ -2454,6 +2457,209 @@ function AppWithForms() {
             {dbLoading && (
               <div style={{ position:'fixed', top:64, right:20, background:'var(--card)', border:'1px solid var(--border)', borderRadius:8, padding:'8px 14px', fontSize:12, color:'var(--text2)', zIndex:999, display:'flex', alignItems:'center', gap:6 }}>
                 <span style={{ animation:'pulse 1s infinite' }}>⏳</span> Atualizando...
+              </div>
+            )}
+            {formPage ? renderFormPage() : <Page key={page} {...pageProps} />}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── APP ROOT — envolve tudo com ClienteProvider e TelaInicial ───────────────
+function AppRoot() {
+  const { user, empresa, loading } = useAuth();
+  if (loading || !user) return <AppWithForms />;
+  return (
+    <ClienteProvider empresaId={empresa?.id}>
+      <AppWithFormsAndCliente />
+    </ClienteProvider>
+  );
+}
+
+function AppWithFormsAndCliente() {
+  const { user, perfil, empresa, loading, logout } = useAuth();
+  const { clienteAtivo, clienteId } = useCliente();
+  const { selecionarCliente } = useCliente();
+  const [formPage,    setFormPage]    = useState(null);
+  const [collapsed,   setCollapsed]   = useState(false);
+  const [dbData,      setDbData]      = useState({});
+  const [dbLoading,   setDbLoading]   = useState(false);
+  const [telainicial, setTelaInicial] = useState(!clienteAtivo);
+
+  // Mostra tela inicial se não houver cliente ativo
+  useEffect(() => {
+    if (!clienteAtivo) setTelaInicial(true);
+  }, [clienteAtivo]);
+
+  const carregarDados = useCallback(async () => {
+    if (!empresa?.id) return;
+    setDbLoading(true);
+    try { const r = await DashboardDB.resumo(empresa.id, clienteId||null); setDbData(r); }
+    catch(e) { console.error(e); }
+    setDbLoading(false);
+  }, [empresa?.id]);
+
+  useEffect(() => { carregarDados(); }, [carregarDados]);
+
+  const navigate  = (p) => { setFormPage(null); setPage(p); };
+  const openForm  = (f) => setFormPage(f);
+  const closeForm = ()  => { setFormPage(null); carregarDados(); };
+
+  const pageProps = { empresa, empresaId: empresa?.id, clienteId: clienteId||null, dbData, recarregar: carregarDados, openForm };
+  const PAGES = {
+    dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
+    creditos: Creditos, ia: IAChat, estrategico: Estrategico,
+    relatorios: RelatoriosPage, nfe: ImportarNFe,
+    conciliacao: ConciliacaoBancaria, contatos: ClientesFornecedores,
+    usuarios: Usuarios, config: Configuracoes,
+  };
+  const Page = PAGES[page] || Dashboard;
+  const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n=>n[0]).join('').toUpperCase() || '??';
+
+  if (loading) return (
+    <>
+      <style>{CSS}</style>
+      <div style={{height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)',flexDirection:'column',gap:16}}>
+        <div style={{width:48,height:48,borderRadius:14,background:'linear-gradient(135deg,#00D4A0,#0090FF)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>⚡</div>
+        <div style={{color:'var(--text3)',fontSize:13}}>Carregando...</div>
+      </div>
+    </>
+  );
+
+  if (!user) return <Login />;
+
+  // Tela inicial — seletor de cliente
+  if (telainicial) return (
+    <>
+      <style>{CSS}</style>
+      <TelaInicial onEntrar={() => setTelaInicial(false)} />
+    </>
+  );
+
+  const renderFormPage = () => {
+    const props = { onBack: closeForm, onSaved: carregarDados };
+    switch(formPage) {
+      case 'conciliacao':    return <ConciliacaoBancaria {...props} />;
+      case 'lancamento':     return <NovoLancamento    {...props} />;
+      case 'conta-pagar':    return <NovaContaPagar    {...props} />;
+      case 'conta-receber':  return <NovaContaReceber  {...props} />;
+      case 'cliente':        return <NovoCliente       {...props} tipo="cliente"    />;
+      case 'fornecedor':     return <NovoCliente       {...props} tipo="fornecedor" />;
+      case 'nfe':            return <ImportarNFe       {...props} />;
+      default: return null;
+    }
+  };
+
+  const TITLES2 = {
+    dashboard: "Dashboard Executivo", financeiro: "Gestão Financeira",
+    tributario: "Inteligência Tributária", creditos: "Recuperação de Créditos",
+    ia: "IA Tributária", estrategico: "Mapeamento Estratégico",
+    relatorios: "Relatórios", nfe: "Importar NF-e",
+    conciliacao: "Conciliação Bancária", contatos: "Clientes & Fornecedores",
+    usuarios: "Usuários & Permissões", config: "Configurações",
+  };
+
+  return (
+    <>
+      <style>{CSS}</style>
+      <div className="app">
+        <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+          <div className="sidebar-logo" style={{cursor:'pointer'}} onClick={() => setTelaInicial(true)}>
+            <div className="logo-icon">⚡</div>
+            {!collapsed && <div className="logo-text">HElevare<span>.Fin</span></div>}
+          </div>
+
+          {NAV.map((sec, si) => (
+            <div key={si} className="sidebar-section">
+              {!collapsed && <div className="sidebar-section-label">{sec.section}</div>}
+              {sec.items.map(item => (
+                <div key={item.id}
+                  className={`nav-item ${page === item.id && !formPage ? "active" : ""}`}
+                  onClick={() => navigate(item.id)}
+                  title={collapsed ? item.label : ""}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  {!collapsed && <span className="nav-label">{item.label}</span>}
+                  {!collapsed && item.badge && <span className={`nav-badge ${item.badgeType || ""}`}>{item.badge}</span>}
+                </div>
+              ))}
+            </div>
+          ))}
+
+          {!collapsed && (
+            <div className="sidebar-section">
+              <div className="sidebar-section-label">Novo</div>
+              {[
+                { label: '+ Lançamento',    form: 'lancamento'    },
+                { label: '+ Conta a Pagar', form: 'conta-pagar'   },
+                { label: '+ A Receber',     form: 'conta-receber' },
+                { label: '+ Cliente',       form: 'cliente'       },
+                { label: '+ Fornecedor',    form: 'fornecedor'    },
+                { label: '+ Importar NF-e', form: 'nfe'           },
+                { label: '+ Conciliar',     form: 'conciliacao'   },
+              ].map(i => (
+                <div key={i.form}
+                  className={`nav-item ${formPage === i.form ? 'active' : ''}`}
+                  onClick={() => openForm(i.form)}
+                >
+                  <span className="nav-icon" style={{color:'var(--accent)',fontSize:12}}>●</span>
+                  <span className="nav-label" style={{fontSize:12}}>{i.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="sidebar-bottom">
+            <div className="user-card" onClick={logout} title="Sair">
+              <div className="user-avatar">{iniciais}</div>
+              {!collapsed && (
+                <div className="user-info">
+                  <div className="user-name">{perfil?.nome || user.email}</div>
+                  <div className="user-role">{perfil?.papel || 'admin'} · {empresa?.nome?.split(' ')[0] || '—'}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </nav>
+
+        <div className="main">
+          <header className="topbar">
+            <button className="btn btn-ghost btn-icon" onClick={() => setCollapsed(c => !c)} style={{fontSize:16}}>
+              {collapsed ? "→" : "←"}
+            </button>
+            <div className="topbar-title" style={{cursor:'pointer'}} onClick={() => setTelaInicial(true)}>
+              {formPage ? ({
+                'lancamento':'Novo Lançamento','conta-pagar':'Nova Conta a Pagar',
+                'conta-receber':'Nova Conta a Receber','cliente':'Novo Cliente',
+                'fornecedor':'Novo Fornecedor','nfe':'Importar NF-e','conciliacao':'Conciliação Bancária',
+              }[formPage]) : TITLES2[page]}
+            </div>
+            <div className="topbar-actions">
+              {/* Cliente ativo */}
+              <ClienteBar onTrocar={() => setTelaInicial(true)} />
+              {!formPage && (
+                <button className="btn btn-primary" onClick={() => openForm('lancamento')}>+ Lançamento</button>
+              )}
+              <div style={{position:"relative"}}>
+                <button className="btn btn-ghost btn-icon">🔔</button>
+                <div className="notif-dot" />
+              </div>
+              <button className="btn btn-ghost btn-icon" onClick={carregarDados} title="Atualizar">🔄</button>
+              <div style={{width:1,height:24,background:"var(--border)"}} />
+              <div
+                className="user-avatar"
+                style={{width:30,height:30,borderRadius:8,background:"linear-gradient(135deg,var(--accent2),var(--accent4))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",cursor:"pointer"}}
+                onClick={logout} title="Sair"
+              >{iniciais}</div>
+            </div>
+          </header>
+
+          <div className="content">
+            {dbLoading && (
+              <div style={{position:'fixed',top:64,right:20,background:'var(--card)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'var(--text2)',zIndex:999,display:'flex',alignItems:'center',gap:6}}>
+                <span style={{animation:'pulse 1s infinite'}}>⏳</span> Atualizando...
               </div>
             )}
             {formPage ? renderFormPage() : <Page key={page} {...pageProps} />}

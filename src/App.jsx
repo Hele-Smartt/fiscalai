@@ -961,7 +961,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     }
     if (tab === 2) {
       const [res, tot] = await Promise.all([
-        ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
+        ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
         ContasPagar.totais(empresaId, clienteId),
       ]);
       setContasPagar(res.data || []);
@@ -969,7 +969,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     }
     if (tab === 3) {
       const [res, tot] = await Promise.all([
-        ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
+        ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
         ContasReceber.totais(empresaId, clienteId),
       ]);
       setContasReceber(res.data || []);
@@ -2308,7 +2308,7 @@ function AppWithForms() {
   const carregarDados = useCallback(async () => {
     if (!empresa?.id) return;
     setDbLoading(true);
-    try { const r = await DashboardDB.resumo(empresa.id, clienteId||null); setDbData(r); }
+    try { const r = await DashboardDB.resumo(empresa.id, null); setDbData(r); }
     catch(e) { console.error(e); }
     setDbLoading(false);
   }, [empresa?.id]);

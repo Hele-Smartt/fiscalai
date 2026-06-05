@@ -669,12 +669,12 @@ function Dashboard({ empresaId, clienteId, openForm, recarregar }) {
   useEffect(() => {
     if (!empresaId) return;
     carregar();
-  }, [empresaId]);
+  }, [empresaId, clienteId]);
 
   async function carregar() {
     setLoading(true);
     try {
-      const r = await DashboardDB.resumo(empresaId);
+      const r = await DashboardDB.resumo(empresaId, clienteId||null);
       setDados(r);
     } catch(e) { console.error(e); }
     setLoading(false);

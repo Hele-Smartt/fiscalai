@@ -11,6 +11,7 @@ import ConciliacaoBancaria from "./pages/ConciliacaoBancaria";
 import SplitPaymentPage from "./pages/SplitPayment";
 import RepasseMedico from "./pages/RepasseMedico";
 import OperadorasCartao from "./pages/OperadorasCartao";
+import GestaoBancaria from "./pages/GestaoBancaria";
 import { ClienteProvider, useCliente } from "./lib/ClienteContext";
 import TelaInicial from "./pages/TelaInicial";
 import ClienteBar from "./components/ClienteBar";
@@ -2135,6 +2136,7 @@ const NAV = [
     { id: "estrategico", label: "Estratégico",          icon: "🎯", badge: null },
     { id: "nfe",        label: "Importar NF-e",        icon: "📋", badge: null },
     { id: "conciliacao", label: "Conciliação Banc.",     icon: "🏦", badge: null },
+    { id: "bancario",    label: "Gestão Bancária",     icon: "🏛️", badge: null },
     { id: "relatorios",  label: "Relatórios",           icon: "📄", badge: null },
   ]},
   { section: "Sistema", items: [
@@ -2157,6 +2159,7 @@ const TITLES = {
   operadoras: "Operadoras de Cartão",
   nfe: "Importar NF-e",
   conciliacao: "Conciliação Bancária",
+  bancario: "Gestão Bancária & Investimentos",
   usuarios: "Usuários & Permissões",
   contatos: "Clientes & Fornecedores",
   config: "Configurações",
@@ -2210,7 +2213,7 @@ function AppWithFormsAndCliente() {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
     relatorios: RelatoriosPage, nfe: ImportarNFe,
-    conciliacao: ConciliacaoBancaria, contatos: ClientesFornecedores,
+    conciliacao: ConciliacaoBancaria, bancario: GestaoBancaria, contatos: ClientesFornecedores,
     usuarios: Usuarios, config: Configuracoes,
   };
   const Page = PAGES[page] || Dashboard;

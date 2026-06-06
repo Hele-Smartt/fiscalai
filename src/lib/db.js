@@ -31,7 +31,7 @@ export const Lancamentos = {
 
   async resumoMes(empresaId, mes, clienteId = null) {
     let q = supabase.from('lancamentos').select('tipo, valor')
-      .eq('empresa_id', empresaId).eq('status', 'confirmado')
+      .eq('empresa_id', empresaId).neq('status', 'cancelado')
       .gte('data_lancamento', `${mes}-01`).lte('data_lancamento', `${mes}-31`)
     if (clienteId) q = q.eq('cliente_helevare_id', clienteId)
     const { data } = await q

@@ -8,6 +8,9 @@ import ImportarNFe from "./pages/ImportarNFe";
 import RelatoriosPage from "./pages/Relatorios";
 import Usuarios from "./pages/Usuarios";
 import ConciliacaoBancaria from "./pages/ConciliacaoBancaria";
+import SplitPaymentPage from "./pages/SplitPayment";
+import RepasseMedico from "./pages/RepasseMedico";
+import OperadorasCartao from "./pages/OperadorasCartao";
 import { ClienteProvider, useCliente } from "./lib/ClienteContext";
 import TelaInicial from "./pages/TelaInicial";
 import ClienteBar from "./components/ClienteBar";
@@ -2126,6 +2129,9 @@ const NAV = [
   ]},
   { section: "Inteligência", items: [
     { id: "ia",          label: "IA Tributária",       icon: "🤖", badge: null },
+    { id: "split",       label: "Split Payment",       icon: "⚡", badge: null },
+    { id: "repasse",     label: "Repasse Médico",      icon: "👨‍⚕️", badge: null },
+    { id: "operadoras",  label: "Operadoras Cartão",   icon: "💳", badge: null },
     { id: "estrategico", label: "Estratégico",          icon: "🎯", badge: null },
     { id: "nfe",        label: "Importar NF-e",        icon: "📋", badge: null },
     { id: "conciliacao", label: "Conciliação Banc.",     icon: "🏦", badge: null },
@@ -2146,6 +2152,9 @@ const TITLES = {
   ia: "IA Tributária",
   estrategico: "Mapeamento Estratégico",
   relatorios: "Relatórios",
+  split: "Split Payment & Reforma",
+  repasse: "Repasse Médico",
+  operadoras: "Operadoras de Cartão",
   nfe: "Importar NF-e",
   conciliacao: "Conciliação Bancária",
   usuarios: "Usuários & Permissões",

@@ -933,7 +933,7 @@ function calcScore(entradas, saidas, aPagar, aReceber) {
   if (saidas === 0 && entradas === 0) score = 400;
   return Math.min(score, 950);
 }
-function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
+function Financeiro({ empresaId, openForm, recarregar }) {
   const [tab, setTab]               = useState(0);
   const [lancamentos, setLancamentos] = useState([]);
   const [contasPagar, setContasPagar] = useState([]);
@@ -949,16 +949,16 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   useEffect(() => {
     if (!empresaId) return;
     carregarDados();
-  }, [empresaId, tab, clienteId]);
+  }, [empresaId, tab]);
 
   async function carregarDados() {
     setLoading(true);
     const mes = new Date().toISOString().slice(0,7);
     if (tab === 0 || tab === 1) {
       const [lRes, fluxoRes, evRes] = await Promise.all([
-        Lancamentos.listar(empresaId, { limite: 20 }, clienteId),
-        Lancamentos.resumoMes(empresaId, mes, clienteId),
-        Lancamentos.evolucao12Meses(empresaId, clienteId),
+        Lancamentos.listar(empresaId, { limite: 20 }),
+        Lancamentos.resumoMes(empresaId, mes),
+        Lancamentos.evolucao12Meses(empresaId),
       ]);
       setLancamentos(lRes.data || []);
       setFluxo(fluxoRes);
@@ -966,16 +966,16 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     }
     if (tab === 2) {
       const [res, tot] = await Promise.all([
-        ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
-        ContasPagar.totais(empresaId, clienteId),
+        ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
+        ContasPagar.totais(empresaId),
       ]);
       setContasPagar(res.data || []);
       setTotaisPagar(tot);
     }
     if (tab === 3) {
       const [res, tot] = await Promise.all([
-        ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
-        ContasReceber.totais(empresaId, clienteId),
+        ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
+        ContasReceber.totais(empresaId),
       ]);
       setContasReceber(res.data || []);
       setTotaisReceber(tot);

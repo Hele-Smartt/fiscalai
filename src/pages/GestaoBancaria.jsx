@@ -77,6 +77,7 @@ export default function GestaoBancaria({ empresaId }) {
   const [showOFX,     setShowOFX]     = useState(false)
   const [ofxItems,    setOfxItems]    = useState([])
   const [ofxConta,    setOfxConta]    = useState('')
+  const [erpItems,    setErpItems]    = useState([])
   const [processando, setProcessando] = useState(false)
   const [salvando,    setSalvando]    = useState(false)
   const [erro,        setErro]        = useState('')
@@ -229,7 +230,16 @@ export default function GestaoBancaria({ empresaId }) {
         ia_aprovado: false,
         status: 'pendente',
       }))
-      setOfxItems(itens)
+      // Carrega ERP e faz match automático
+      const erpList = await carregarErpParaConciliacao()
+      const itensComMatch = matchAutomatico(itens, erpList)
+      // Atualiza erpItems com matches
+      erpList.forEach((erp, erpIdx) => {
+        const ofxMatch = itensComMatch.find(it => it.erpIdx === erpIdx)
+        if (ofxMatch) { erp.matched = true; erp.matchIdx = itensComMatch.indexOf(ofxMatch) }
+      })
+      setErpItems(erpList)
+      setOfxItems(itensComMatch)
       setShowOFX(true)
     } catch(e) { setErro(e.message) }
     setProcessando(false)
@@ -258,6 +268,74 @@ export default function GestaoBancaria({ empresaId }) {
     if (contaSel) carregarMovs()
   }
 
+  // Carrega lançamentos ERP para conciliação
+  async function carregarErpParaConciliacao() {
+    const { data: lancs } = await supabase
+      .from('lancamentos')
+      .select('id, descricao, valor, tipo, data_lancamento, status')
+      .eq('empresa_id', empresa.id)
+      .eq('cliente_helevare_id', clienteId)
+      .neq('status', 'cancelado')
+      .order('data_lancamento', { ascending: false })
+      .limit(200)
+
+    const { data: cp } = await supabase
+      .from('contas_pagar')
+      .select('id, descricao, valor, vencimento')
+      .eq('empresa_id', empresa.id)
+      .eq('cliente_helevare_id', clienteId)
+      .eq('status', 'pendente')
+
+    const { data: cr } = await supabase
+      .from('contas_receber')
+      .select('id, descricao, valor, vencimento')
+      .eq('empresa_id', empresa.id)
+      .eq('cliente_helevare_id', clienteId)
+      .eq('status', 'pendente')
+
+    const items = [
+      ...(lancs||[]).map(l => ({ id:l.id, descricao:l.descricao, valor:Number(l.valor), data:l.data_lancamento, tipo:l.tipo, origem:'Lançamento', matched:false, matchIdx:-1 })),
+      ...(cp||[]).map(c => ({ id:c.id, descricao:c.descricao, valor:Number(c.valor), data:c.vencimento, tipo:'saida', origem:'Conta a Pagar', matched:false, matchIdx:-1 })),
+      ...(cr||[]).map(c => ({ id:c.id, descricao:c.descricao, valor:Number(c.valor), data:c.vencimento, tipo:'entrada', origem:'Conta a Receber', matched:false, matchIdx:-1 })),
+    ]
+    return items
+  }
+
+  // Match automático: valor + data (tolerância 3 dias)
+  function matchAutomatico(ofxList, erpList) {
+    const erpCopy = erpList.map(e => ({...e}))
+    return ofxList.map((ofx, ofxIdx) => {
+      const vOfx = Math.abs(Number(ofx.valor))
+      const dOfx = new Date(ofx.data)
+      let bestIdx = -1
+      let bestDiff = 4 // tolerância máxima 3 dias
+
+      erpCopy.forEach((erp, erpIdx) => {
+        if (erp.matched) return
+        const vErp = Math.abs(Number(erp.valor))
+        if (Math.abs(vOfx - vErp) > 0.01) return // valor diferente
+        const dErp = new Date(erp.data)
+        const diffDias = Math.abs((dOfx - dErp) / (1000*60*60*24))
+        if (diffDias < bestDiff) { bestDiff = diffDias; bestIdx = erpIdx }
+      })
+
+      if (bestIdx >= 0) {
+        erpCopy[bestIdx].matched = true
+        erpCopy[bestIdx].matchIdx = ofxIdx
+        return { ...ofx, matched: true, erpIdx: bestIdx, conciliado: false }
+      }
+      return { ...ofx, matched: false, erpIdx: -1, conciliado: false }
+    })
+  }
+
+  function conciliarItem(ofxIdx) {
+    setOfxItems(items => items.map((it,i) => i===ofxIdx ? {...it, conciliado:true, ia_aprovado:true} : it))
+  }
+
+  function conciliarTodosMatch() {
+    setOfxItems(items => items.map(it => it.matched ? {...it, conciliado:true, ia_aprovado:true} : it))
+  }
+
   async function aprovarTodos() {
     setOfxItems(items => items.map(it => ({...it, ia_aprovado:true})))
   }
@@ -267,7 +345,7 @@ export default function GestaoBancaria({ empresaId }) {
   return (
     <div className="fade-up">
       <input ref={fileRef} type="file" accept=".ofx,.ofc" style={{display:'none'}}
-        onChange={e => e.target.files[0] && processarOFX(e.target.files[0])} />
+        onChange={e => { if(e.target.files[0] && ofxConta) { processarOFX(e.target.files[0]); e.target.value='' } }} />
 
       <div className="section-header mb-16">
         <div>
@@ -275,7 +353,7 @@ export default function GestaoBancaria({ empresaId }) {
           <div className="section-sub">Contas correntes, investimentos e caixas · {clienteAtivo?.nome}</div>
         </div>
         <div className="flex gap-8 flex-wrap">
-          <button className="btn btn-ghost" onClick={() => { if(!ofxConta && contas.length) setOfxConta(contas[0].id); fileRef.current?.click() }} disabled={processando}>
+          <button className="btn btn-ghost" onClick={() => { setOfxItems([]); setShowOFX(true) }} disabled={processando}>
             {processando ? '⏳ Lendo OFX...' : '📂 Importar OFX'}
           </button>
           <button className="btn btn-ghost" onClick={() => setShowTransf(true)}>⇄ Transferência</button>
@@ -355,7 +433,7 @@ export default function GestaoBancaria({ empresaId }) {
               {contas.map(c=><option key={c.id} value={c.id}>{TIPO_ICONS[c.tipo]} {c.apelido} — {fmt(saldos[c.id]||0)}</option>)}
             </select>
             {contaSel && (
-              <button className="btn btn-ghost" onClick={() => { setOfxConta(contaSel); fileRef.current?.click() }}>
+              <button className="btn btn-ghost" onClick={() => { setOfxConta(contaSel); setOfxItems([]); setShowOFX(true) }}>
                 📂 Importar OFX nesta conta
               </button>
             )}
@@ -631,76 +709,164 @@ export default function GestaoBancaria({ empresaId }) {
         </div>
       )}
 
-      {/* MODAL: OFX — Fila de aprovação IA */}
-      {showOFX && (
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:20}}>
-          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,padding:32,width:'100%',maxWidth:780,maxHeight:'90vh',display:'flex',flexDirection:'column',gap:16}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div style={{fontFamily:'var(--font-head)',fontSize:18,fontWeight:800}}>🤖 Fila de Aprovação IA — {ofxItems.length} transações</div>
+      {/* MODAL STEP 1: Seleção obrigatória de conta ANTES do upload */}
+      {showOFX && ofxItems.length === 0 && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:20}}
+          onClick={e=>e.target===e.currentTarget&&setShowOFX(false)}>
+          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,padding:32,width:'100%',maxWidth:460}}>
+            <div style={{fontFamily:'var(--font-head)',fontSize:18,fontWeight:800,marginBottom:6}}>📂 Importar Extrato OFX</div>
+            <div style={{fontSize:13,color:'var(--text3)',marginBottom:24}}>Selecione a qual conta bancária pertence este extrato antes de fazer o upload.</div>
+            <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:6}}>Conta Bancária *</label>
+            <select className="inp" style={{marginBottom:20}} value={ofxConta} onChange={e=>setOfxConta(e.target.value)}>
+              <option value="">— Selecione a conta —</option>
+              {contas.map(c=><option key={c.id} value={c.id}>{TIPO_ICONS[c.tipo]} {c.apelido} {c.banco_nome?`— ${c.banco_nome}`:''}</option>)}
+            </select>
+            <div style={{display:'flex',gap:10}}>
+              <button style={{flex:1,padding:11,borderRadius:'var(--radius)',background:'transparent',color:'var(--text2)',border:'1px solid var(--border2)',cursor:'pointer'}} onClick={()=>setShowOFX(false)}>Cancelar</button>
+              <button style={{flex:2,padding:11,borderRadius:'var(--radius)',background: ofxConta?'var(--accent)':'var(--border)',color: ofxConta?'var(--bg)':'var(--text3)',border:'none',cursor: ofxConta?'pointer':'not-allowed',fontFamily:'var(--font-head)',fontWeight:700}}
+                disabled={!ofxConta}
+                onClick={()=>fileRef.current?.click()}>
+                📂 Selecionar Arquivo OFX
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL STEP 2: IA + Conciliação em duas colunas */}
+      {showOFX && ofxItems.length > 0 && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.92)',display:'flex',flexDirection:'column',zIndex:1000}}>
+          {/* Header */}
+          <div style={{background:'var(--card)',borderBottom:'1px solid var(--border)',padding:'16px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+            <div>
+              <div style={{fontFamily:'var(--font-head)',fontSize:17,fontWeight:800}}>
+                🤖 IA + Conciliação Bancária — {contas.find(c=>c.id===ofxConta)?.apelido}
+              </div>
+              <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
+                {ofxItems.length} transações importadas · {ofxItems.filter(i=>i.ia_aprovado).length} aprovadas · {ofxItems.filter(i=>i.matched).length} conciliadas
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-ghost" onClick={aprovarTodos}>✓ Aprovar Todos</button>
+              <button className="btn btn-ghost" onClick={conciliarTodosMatch}>🔗 Conciliar Matches</button>
+              <button className="btn btn-primary" onClick={salvarOFX} disabled={salvando||!ofxConta}>
+                {salvando?'⏳':'💾 Salvar'}
+              </button>
               <button className="btn btn-ghost btn-icon" onClick={()=>{setShowOFX(false);setOfxItems([])}}>✕</button>
             </div>
+          </div>
 
-            <div style={{display:'flex',alignItems:'center',gap:12}}>
-              <label style={{fontSize:12,color:'var(--text2)',fontWeight:600}}>Conta bancária:</label>
-              <select className="inp" style={{maxWidth:280}} value={ofxConta} onChange={e=>setOfxConta(e.target.value)}>
-                <option value="">— Selecione —</option>
-                {contas.map(c=><option key={c.id} value={c.id}>{TIPO_ICONS[c.tipo]} {c.apelido}</option>)}
-              </select>
-              <button className="btn btn-ghost" onClick={aprovarTodos}>✓ Aprovar Todos</button>
+          {/* Legenda */}
+          <div style={{background:'var(--bg3)',padding:'8px 24px',display:'flex',gap:20,fontSize:11,color:'var(--text3)',flexShrink:0}}>
+            <span><span style={{color:'var(--success)'}}>●</span> Match automático (valor + data)</span>
+            <span><span style={{color:'var(--accent4)'}}>●</span> Categoria sugerida pela IA</span>
+            <span><span style={{color:'var(--warn)'}}>●</span> Pendente de aprovação</span>
+          </div>
+
+          {/* Duas colunas */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',flex:1,overflow:'hidden',gap:0}}>
+
+            {/* COLUNA A: Extrato OFX */}
+            <div style={{display:'flex',flexDirection:'column',borderRight:'2px solid var(--border)',overflow:'hidden'}}>
+              <div style={{background:'rgba(0,144,255,0.08)',padding:'12px 20px',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+                <div style={{fontWeight:700,fontSize:13,color:'var(--accent2)'}}>📥 Coluna A — Extrato Bancário (OFX)</div>
+                <div style={{fontSize:11,color:'var(--text3)'}}>Dados reais do banco</div>
+              </div>
+              <div style={{overflowY:'auto',flex:1}}>
+                {ofxItems.map((it,i)=>(
+                  <div key={i} style={{
+                    padding:'12px 20px', borderBottom:'1px solid var(--border)',
+                    background: it.matched ? 'rgba(0,212,160,0.06)' : it.ia_aprovado ? 'rgba(0,212,160,0.03)' : 'transparent',
+                    borderLeft: it.matched ? '3px solid var(--success)' : it.ia_aprovado ? '3px solid rgba(0,212,160,0.3)' : '3px solid transparent',
+                    transition:'all 0.2s',
+                  }}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.descricao}</div>
+                        <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{fmtD(it.data)} · {it.tipo}</div>
+                      </div>
+                      <div style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:14,color:Number(it.valor)>=0?'var(--success)':'var(--danger)',marginLeft:12,flexShrink:0}}>
+                        {Number(it.valor)>=0?'+':''}{fmt(it.valor)}
+                      </div>
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                      {it.ia_categoria_sugerida && (
+                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(168,85,247,0.12)',color:'var(--accent4)'}}>
+                          🤖 {it.ia_categoria_sugerida} {it.ia_confianca?`(${it.ia_confianca}%)`:''}</span>
+                      )}
+                      {it.matched && <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(0,212,160,0.15)',color:'var(--success)'}}>✓ Match encontrado</span>}
+                      {!it.ia_aprovado && (
+                        <button onClick={()=>aprovarOFX(i)}
+                          style={{fontSize:10,padding:'2px 10px',borderRadius:10,background:'rgba(0,212,160,0.12)',color:'var(--accent)',border:'1px solid rgba(0,212,160,0.3)',cursor:'pointer',fontWeight:600}}>
+                          ✓ Aprovar lançamento
+                        </button>
+                      )}
+                      {it.ia_aprovado && !it.matched && <span style={{fontSize:10,color:'var(--success)'}}>✓ Aprovado</span>}
+                      {it.matched && !it.conciliado && (
+                        <button onClick={()=>conciliarItem(i)}
+                          style={{fontSize:10,padding:'2px 10px',borderRadius:10,background:'rgba(0,212,160,0.2)',color:'var(--success)',border:'1px solid rgba(0,212,160,0.4)',cursor:'pointer',fontWeight:700}}>
+                          🔗 Conciliar
+                        </button>
+                      )}
+                      {it.conciliado && <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(0,212,160,0.2)',color:'var(--success)',fontWeight:700}}>✅ Conciliado</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{overflowY:'auto',flex:1}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-                <thead>
-                  <tr style={{borderBottom:'1px solid var(--border)'}}>
-                    <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text3)',fontWeight:600,fontSize:11}}>Data</th>
-                    <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text3)',fontWeight:600,fontSize:11}}>Descrição</th>
-                    <th style={{padding:'8px 12px',textAlign:'right',color:'var(--text3)',fontWeight:600,fontSize:11}}>Valor</th>
-                    <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text3)',fontWeight:600,fontSize:11}}>🤖 Categoria IA</th>
-                    <th style={{padding:'8px 12px',textAlign:'center',color:'var(--text3)',fontWeight:600,fontSize:11}}>Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ofxItems.map((it,i)=>(
-                    <tr key={i} style={{borderBottom:'1px solid var(--border)',background:it.ia_aprovado?'rgba(0,212,160,0.04)':''}}>
-                      <td style={{padding:'10px 12px',color:'var(--text3)',fontSize:12}}>{fmtD(it.data)}</td>
-                      <td style={{padding:'10px 12px',maxWidth:220}}>
-                        <div style={{fontSize:12,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.descricao}</div>
-                      </td>
-                      <td style={{padding:'10px 12px',textAlign:'right',fontFamily:'var(--font-head)',fontWeight:700,color:it.valor>=0?'var(--success)':'var(--danger)'}}>
-                        {it.valor>=0?'+':''}{fmt(it.valor)}
-                      </td>
-                      <td style={{padding:'10px 12px'}}>
-                        <div style={{fontSize:11,color:'var(--accent4)'}}>
-                          {it.ia_categoria_sugerida||'—'}
-                          {it.ia_confianca && <span style={{color:'var(--text3)',marginLeft:4}}>({it.ia_confianca}%)</span>}
+            {/* COLUNA B: Operacional ERP */}
+            <div style={{display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              <div style={{background:'rgba(168,85,247,0.08)',padding:'12px 20px',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+                <div style={{fontWeight:700,fontSize:13,color:'var(--accent4)'}}>📊 Coluna B — Operacional da Clínica (ERP)</div>
+                <div style={{fontSize:11,color:'var(--text3)'}}>Lançamentos, contas a pagar/receber cadastrados</div>
+              </div>
+              <div style={{overflowY:'auto',flex:1}}>
+                {erpItems.length === 0 ? (
+                  <div style={{padding:32,textAlign:'center',color:'var(--text3)',fontSize:13}}>
+                    Carregando lançamentos do sistema...
+                  </div>
+                ) : erpItems.map((erp,i)=>(
+                  <div key={i} style={{
+                    padding:'12px 20px', borderBottom:'1px solid var(--border)',
+                    background: erp.matched ? 'rgba(0,212,160,0.06)' : 'transparent',
+                    borderLeft: erp.matched ? '3px solid var(--success)' : '3px solid transparent',
+                    transition:'all 0.2s',
+                  }}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{erp.descricao}</div>
+                        <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>
+                          {fmtD(erp.data)} · <span className={`badge ${erp.tipo==='entrada'?'badge-success':'badge-danger'}`} style={{fontSize:9}}>{erp.tipo}</span>
+                          {erp.origem && <span style={{color:'var(--text3)',marginLeft:6}}>{erp.origem}</span>}
                         </div>
-                      </td>
-                      <td style={{padding:'10px 12px',textAlign:'center'}}>
-                        {it.ia_aprovado
-                          ? <span style={{color:'var(--success)',fontSize:16}}>✓</span>
-                          : <button onClick={()=>aprovarOFX(i)}
-                              style={{padding:'4px 12px',borderRadius:6,background:'rgba(0,212,160,0.12)',color:'var(--accent)',border:'1px solid rgba(0,212,160,0.3)',cursor:'pointer',fontSize:11,fontWeight:600}}>
-                              ✓ Aprovar
-                            </button>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                      <div style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:14,color:erp.tipo==='entrada'?'var(--success)':'var(--danger)',marginLeft:12,flexShrink:0}}>
+                        {erp.tipo==='entrada'?'+':'-'}{fmt(erp.valor)}
+                      </div>
+                    </div>
+                    {erp.matched && (
+                      <div style={{marginTop:6,fontSize:10,color:'var(--success)'}}>
+                        ✓ Match com: {ofxItems[erp.matchIdx]?.descricao?.slice(0,40)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
+          </div>
 
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid var(--border)',paddingTop:16}}>
-              <div style={{fontSize:12,color:'var(--text3)'}}>
-                {ofxItems.filter(i=>i.ia_aprovado).length}/{ofxItems.length} aprovados
-              </div>
-              <div style={{display:'flex',gap:10}}>
-                <button className="btn btn-ghost" onClick={()=>{setShowOFX(false);setOfxItems([])}}>Cancelar</button>
-                <button className="btn btn-primary" onClick={salvarOFX} disabled={salvando||!ofxConta}>
-                  {salvando?'⏳ Salvando...':'💾 Importar Transações'}
-                </button>
-              </div>
-            </div>
+          {/* Rodapé stats */}
+          <div style={{background:'var(--card)',borderTop:'1px solid var(--border)',padding:'10px 24px',display:'flex',gap:24,fontSize:12,color:'var(--text3)',flexShrink:0}}>
+            <span>Total OFX: <strong style={{color:'var(--text)'}}>{ofxItems.length}</strong></span>
+            <span>Matches: <strong style={{color:'var(--success)'}}>{ofxItems.filter(i=>i.matched).length}</strong></span>
+            <span>Aprovados IA: <strong style={{color:'var(--accent4)'}}>{ofxItems.filter(i=>i.ia_aprovado).length}</strong></span>
+            <span>Conciliados: <strong style={{color:'var(--success)'}}>{ofxItems.filter(i=>i.conciliado).length}</strong></span>
+            <span style={{marginLeft:'auto'}}>
+              Taxa conciliação: <strong style={{color:'var(--accent)'}}>
+                {ofxItems.length > 0 ? Math.round(ofxItems.filter(i=>i.conciliado).length/ofxItems.length*100) : 0}%
+              </strong>
+            </span>
           </div>
         </div>
       )}

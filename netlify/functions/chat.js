@@ -28,53 +28,77 @@ exports.handler = async (event) => {
     let content
 
     if (arquivo?.base64 && isPdf) {
-      // PDF — verifica tamanho (base64 de 4MB PDF = ~5.3MB string)
       if (arquivo.base64.length > 5_000_000) {
         return {
           statusCode: 200,
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-          body: JSON.stringify({ error: 'PDF muito grande. Reduza o arquivo para menos de 4MB.' })
+          body: JSON.stringify({ error: 'PDF muito grande. Reduza para menos de 4MB.' })
         }
       }
       content = [
-        {
-          type: 'document',
-          source: { type: 'base64', media_type: 'application/pdf', data: arquivo.base64 },
-        },
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: arquivo.base64 } },
         { type: 'text', text: message },
       ]
     } else if (arquivo?.base64 && isImage) {
       const mediaType = ['image/jpeg','image/png','image/gif','image/webp'].includes(arquivo.mediaType)
         ? arquivo.mediaType : 'image/jpeg'
       content = [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mediaType, data: arquivo.base64 },
-        },
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: arquivo.base64 } },
         { type: 'text', text: message },
       ]
     } else {
       content = message
     }
 
-    const headers = {
+    const reqHeaders = {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
     }
-    if (isPdf) headers['anthropic-beta'] = 'pdfs-2024-09-25'
+    if (isPdf) reqHeaders['anthropic-beta'] = 'pdfs-2024-09-25'
+
+    const isNFe = message.includes('Extrai') || message.includes('NF-e') || message.includes('DANFE') || message.includes('JSON')
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers,
+      headers: reqHeaders,
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 2000,
-        system:
-          'Você é especialista em tributação brasileira e leitura de Notas Fiscais (NF-e/DANFE). ' +
-          'Quando receber um PDF ou imagem de NF-e/DANFE, extraia TODOS os dados disponíveis. ' +
-          'Responda APENAS com JSON válido e nada mais. Sem markdown, sem texto extra, sem explicações. ' +
-          'Se não conseguir ler algum campo, use null.',
+        system: isNFe
+          ? `Você é especialista em leitura de Notas Fiscais brasileiras (NF-e, NFS-e, DANFE, CT-e).
+Ao receber PDF ou imagem, extraia TODOS os dados visíveis.
+Responda APENAS com JSON válido, sem markdown, sem texto extra, sem explicações.
+Se um campo não estiver visível, use null.
+
+Estrutura obrigatória:
+{
+  "numero": "número da nota",
+  "serie": "série",
+  "data_emissao": "YYYY-MM-DD",
+  "operacao": "saida ou entrada",
+  "natureza_operacao": "descrição",
+  "emit_nome": "nome/razão social do emitente",
+  "emit_cnpj": "CNPJ do emitente somente números",
+  "dest_nome": "nome/razão social do destinatário/tomador",
+  "dest_cnpj": "CNPJ do destinatário somente números",
+  "valor_total": 0.00,
+  "valor_produtos": 0.00,
+  "valor_servicos": 0.00,
+  "base_calculo": 0.00,
+  "valor_icms": 0.00,
+  "valor_pis": 0.00,
+  "valor_cofins": 0.00,
+  "valor_iss": 0.00,
+  "valor_ipi": 0.00,
+  "valor_inss": 0.00,
+  "chave_acesso": "44 dígitos se visível",
+  "tipo_nota": "nfe ou nfse ou cte",
+  "itens": []
+}`
+          : `Você é especialista em tributação brasileira e finanças empresariais.
+Responda em português, de forma técnica e objetiva.
+Use **negrito** para destaques.`,
         messages: [{ role: 'user', content }],
       }),
     })
@@ -85,7 +109,7 @@ exports.handler = async (event) => {
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ error: `Erro na API: ${response.status} — ${errText.slice(0,200)}` })
+        body: JSON.stringify({ error: `Erro na API Anthropic: ${response.status} — ${errText.slice(0,300)}` })
       }
     }
 

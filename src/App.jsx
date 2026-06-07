@@ -17,6 +17,7 @@ import TelaInicial from "./pages/TelaInicial";
 import ClienteBar from "./components/ClienteBar";
 import NovoCliente from "./pages/forms/NovoCliente";
 import Login from "./pages/Login";
+import { supabase } from "./lib/supabase";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
 
 // ─── PALETTE & TOKENS ───────────────────────────────────────────────────────

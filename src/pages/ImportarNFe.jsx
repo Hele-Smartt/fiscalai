@@ -348,6 +348,7 @@ export default function ImportarNFe({ onBack, onSaved }) {
         const descLanc = `NF-e ${parsed.numero||'s/n'} — ${parsed.operacao==='saida'?parsed.dest_nome:parsed.emit_nome||''}`.slice(0,200)
         await Lancamentos.criar({
           empresa_id:     empresa.id,
+          cliente_helevare_id: clienteId || null,
           descricao:      descLanc,
           valor:          parsed.valor_total || 0,
           tipo:           parsed.operacao === 'saida' ? 'entrada' : 'saida',

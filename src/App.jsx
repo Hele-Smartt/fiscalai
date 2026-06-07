@@ -933,277 +933,503 @@ function calcScore(entradas, saidas, aPagar, aReceber) {
   if (saidas === 0 && entradas === 0) score = 400;
   return Math.min(score, 950);
 }
-function Financeiro({ empresaId, openForm, recarregar }) {
-  const [tab, setTab]               = useState(0);
-  const [lancamentos, setLancamentos] = useState([]);
-  const [contasPagar, setContasPagar] = useState([]);
-  const [contasReceber, setContasReceber] = useState([]);
-  const [totaisPagar, setTotaisPagar]   = useState({ pendente:0, vencido:0, pago:0 });
-  const [totaisReceber, setTotaisReceber] = useState({ pendente:0, vencido:0, recebido:0 });
-  const [fluxo, setFluxo]           = useState({ entradas:0, saidas:0, saldo:0 });
-  const [evolucao, setEvolucao]     = useState([]);
-  const [loading, setLoading]       = useState(true);
+
+function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
+  const { clienteAtivo } = useCliente();
+  const [tab,        setTab]        = useState(0);
+  const [loading,    setLoading]    = useState(true);
+  const [salvando,   setSalvando]   = useState(null); // id do lançamento sendo salvo
+
+  // Filtros de período
+  const hoje = new Date();
+  const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0,10);
+  const ultimoDia   = new Date(hoje.getFullYear(), hoje.getMonth()+1, 0).toISOString().slice(0,10);
+  const [dataInicio, setDataInicio] = useState(primeiroDia);
+  const [dataFim,    setDataFim]    = useState(ultimoDia);
   const [filtroStatus, setFiltroStatus] = useState('');
-  const tabs = ["Fluxo de Caixa", "DRE Gerencial", "Contas a Pagar", "Contas a Receber"];
+  const [filtroTipo,   setFiltroTipo]   = useState('');
+  const [busca,        setBusca]        = useState('');
 
+  // Dados
+  const [lancamentos,   setLancamentos]   = useState([]);
+  const [fluxo,         setFluxo]         = useState({ entradas:0, saidas:0, saldo:0 });
+  const [evolucao,      setEvolucao]      = useState([]);
+  const [contasPagar,   setContasPagar]   = useState([]);
+  const [contasReceber, setContasReceber] = useState([]);
+  const [totaisPagar,   setTotaisPagar]   = useState({ pendente:0, vencido:0, pago:0 });
+  const [totaisReceber, setTotaisReceber] = useState({ pendente:0, vencido:0, recebido:0 });
+
+  // Modal edição
+  const [editando,   setEditando]   = useState(null);
+  const [editForm,   setEditForm]   = useState({});
+  const [showTodos,  setShowTodos]  = useState(false);
+  const [todosLanc,  setTodosLanc]  = useState([]);
+  const [loadTodos,  setLoadTodos]  = useState(false);
+
+  const tabs = ['Fluxo de Caixa','DRE Gerencial','Contas a Pagar','Contas a Receber'];
+  const fmt  = n => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n||0);
+  const fmtK = n => Math.abs(n||0)>=1000 ? `R$ ${((n||0)/1000).toFixed(1)}K` : fmt(n);
+  const fmtD = d => d ? new Date(d+'T12:00:00').toLocaleDateString('pt-BR') : '—';
+
+  // Carrega sempre que mudar período, tab ou clienteId
   useEffect(() => {
-    if (!empresaId) return;
-    carregarDados();
-  }, [empresaId, tab]);
+    if (empresaId && clienteId) carregar();
+  }, [empresaId, clienteId, tab, dataInicio, dataFim, filtroStatus]);
 
-  async function carregarDados() {
+  async function carregar() {
     setLoading(true);
-    const mes = new Date().toISOString().slice(0,7);
-    if (tab === 0 || tab === 1) {
-      const [lRes, fluxoRes, evRes] = await Promise.all([
-        Lancamentos.listar(empresaId, { limite: 20 }),
-        Lancamentos.resumoMes(empresaId, mes),
-        Lancamentos.evolucao12Meses(empresaId),
-      ]);
-      setLancamentos(lRes.data || []);
-      setFluxo(fluxoRes);
-      setEvolucao(evRes);
-    }
-    if (tab === 2) {
-      const [res, tot] = await Promise.all([
-        ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
-        ContasPagar.totais(empresaId),
-      ]);
-      setContasPagar(res.data || []);
-      setTotaisPagar(tot);
-    }
-    if (tab === 3) {
-      const [res, tot] = await Promise.all([
-        ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}),
-        ContasReceber.totais(empresaId),
-      ]);
-      setContasReceber(res.data || []);
-      setTotaisReceber(tot);
-    }
+    try {
+      if (tab === 0 || tab === 1) {
+        // Busca lançamentos no período selecionado
+        let q = supabase
+          .from('lancamentos')
+          .select('*, categorias(nome,cor,icone), clientes(nome), fornecedores(nome)')
+          .eq('empresa_id', empresaId)
+          .eq('cliente_helevare_id', clienteId)
+          .neq('status','cancelado')
+          .gte('data_lancamento', dataInicio)
+          .lte('data_lancamento', dataFim)
+          .order('data_lancamento', { ascending: false });
+        const { data: lData } = await q;
+        const lancs = lData || [];
+        setLancamentos(lancs);
+
+        // Calcula fluxo do período
+        const entradas = lancs.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0);
+        const saidas   = lancs.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0);
+        setFluxo({ entradas, saidas, saldo: entradas - saidas });
+
+        // Evolução 12 meses (independente do filtro de período)
+        const ev = await Lancamentos.evolucao12Meses(empresaId, clienteId);
+        setEvolucao(ev);
+      }
+      if (tab === 2) {
+        const [res, tot] = await Promise.all([
+          ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
+          ContasPagar.totais(empresaId, clienteId),
+        ]);
+        setContasPagar(res.data || []);
+        setTotaisPagar(tot);
+      }
+      if (tab === 3) {
+        const [res, tot] = await Promise.all([
+          ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
+          ContasReceber.totais(empresaId, clienteId),
+        ]);
+        setContasReceber(res.data || []);
+        setTotaisReceber(tot);
+      }
+    } catch(e) { console.error(e); }
     setLoading(false);
   }
 
-  async function marcarPago(id) {
-    await ContasPagar.pagar(id, new Date().toISOString().slice(0,10), null);
-    carregarDados();
+  // Abre modal de edição
+  function abrirEdicao(lanc) {
+    setEditando(lanc.id);
+    setEditForm({
+      descricao:       lanc.descricao       || '',
+      valor:           lanc.valor           || '',
+      tipo:            lanc.tipo            || 'entrada',
+      status:          lanc.status          || 'confirmado',
+      data_lancamento: lanc.data_lancamento || '',
+      observacao:      lanc.observacao      || '',
+    });
   }
 
-  async function marcarRecebido(id) {
-    await ContasReceber.receber(id, new Date().toISOString().slice(0,10), null);
-    carregarDados();
+  async function salvarEdicao() {
+    setSalvando(editando);
+    await Lancamentos.atualizar(editando, {
+      ...editForm,
+      valor: parseFloat(editForm.valor),
+    });
+    setSalvando(null);
+    setEditando(null);
+    await carregar();
+    if (showTodos) carregarTodos();
   }
 
-  async function deletarLancamento(id) {
+  // Altera status direto na tabela e recarrega
+  async function alterarStatus(id, novoStatus) {
+    setSalvando(id);
+    await Lancamentos.atualizar(id, { status: novoStatus });
+    setSalvando(null);
+    await carregar();
+    if (showTodos) {
+      setTodosLanc(tl => tl.map(l => l.id===id ? {...l, status:novoStatus} : l));
+    }
+  }
+
+  async function deletar(id) {
     if (!confirm('Excluir este lançamento?')) return;
     await Lancamentos.deletar(id);
-    carregarDados();
+    await carregar();
+    if (showTodos) carregarTodos();
   }
 
-  const revenueArr = evolucao.map(e => e.entradas || 0);
-  const expenseArr = evolucao.map(e => e.saidas   || 0);
-  const labelsArr  = evolucao.map(e => e.mes);
-  const maxEv = Math.max(...revenueArr, ...expenseArr, 1);
+  async function carregarTodos() {
+    setLoadTodos(true);
+    const { data } = await supabase
+      .from('lancamentos')
+      .select('*, categorias(nome,cor,icone), clientes(nome), fornecedores(nome)')
+      .eq('empresa_id', empresaId)
+      .eq('cliente_helevare_id', clienteId)
+      .order('data_lancamento', { ascending: false })
+      .limit(500);
+    setTodosLanc(data || []);
+    setLoadTodos(false);
+  }
 
-  const statusBadge = (s) => {
-    const map = {
-      confirmado:  ['badge-success', '✓ Confirmado'],
-      pendente:    ['badge-warn',    '⏳ Pendente'],
-      cancelado:   ['badge-danger',  '✗ Cancelado'],
-      pago:        ['badge-success', '✓ Pago'],
-      vencido:     ['badge-danger',  '⚠ Vencido'],
-      recebido:    ['badge-success', '✓ Recebido'],
-      parcelado:   ['badge-info',    '📋 Parcelado'],
-      parcial:     ['badge-warn',    '📋 Parcial'],
-    };
-    const [cls, label] = map[s] || ['badge-info', s];
-    return <span className={`badge ${cls}`}>{label}</span>;
-  };
+  function abrirTodos() { setShowTodos(true); carregarTodos(); }
+
+  // Período rápido
+  function setPeriodo(tipo) {
+    const h = new Date();
+    if (tipo === 'mes')  { setDataInicio(new Date(h.getFullYear(),h.getMonth(),1).toISOString().slice(0,10)); setDataFim(new Date(h.getFullYear(),h.getMonth()+1,0).toISOString().slice(0,10)); }
+    if (tipo === 'trim') { setDataInicio(new Date(h.getFullYear(),Math.floor(h.getMonth()/3)*3,1).toISOString().slice(0,10)); setDataFim(new Date(h.getFullYear(),Math.floor(h.getMonth()/3)*3+3,0).toISOString().slice(0,10)); }
+    if (tipo === 'ano')  { setDataInicio(`${h.getFullYear()}-01-01`); setDataFim(`${h.getFullYear()}-12-31`); }
+    if (tipo === '7d')   { setDataInicio(new Date(h-7*86400000).toISOString().slice(0,10)); setDataFim(h.toISOString().slice(0,10)); }
+    if (tipo === '30d')  { setDataInicio(new Date(h-30*86400000).toISOString().slice(0,10)); setDataFim(h.toISOString().slice(0,10)); }
+  }
+
+  const maxEv = Math.max(...evolucao.map(e=>Math.max(e.entradas||0,e.saidas||0)),1);
+  const lancFiltrados = (showTodos ? todosLanc : lancamentos).filter(l => {
+    if (filtroTipo && l.tipo !== filtroTipo) return false;
+    if (filtroStatus && l.status !== filtroStatus) return false;
+    if (busca && !l.descricao?.toLowerCase().includes(busca.toLowerCase())) return false;
+    return true;
+  });
+  const totalEntradas = lancFiltrados.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0);
+  const totalSaidas   = lancFiltrados.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0);
+
+  const StatusSelect = ({ id, value }) => (
+    <select
+      style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,fontSize:11,cursor:'pointer',padding:'2px 6px',
+        color:value==='confirmado'?'var(--success)':value==='cancelado'?'var(--danger)':'var(--warn)'}}
+      value={value}
+      onChange={e => alterarStatus(id, e.target.value)}
+      disabled={salvando===id}
+    >
+      <option value="confirmado">✓ Confirmado</option>
+      <option value="pendente">⏳ Pendente</option>
+      <option value="cancelado">✕ Cancelado</option>
+    </select>
+  );
+
+  const TabelaLancamentos = ({ lista, mostrarEditar=true }) => (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Descrição</th><th>Categoria</th><th>Data</th>
+            <th>Status</th><th>Tipo</th><th>Valor</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {lista.map(l=>(
+            <tr key={l.id} style={{opacity:salvando===l.id?0.5:1,transition:'opacity 0.2s',
+              background:l.tipo==='entrada'?'rgba(0,212,160,0.02)':'rgba(255,71,87,0.02)'}}>
+              <td>
+                <div style={{fontSize:13,fontWeight:500,color:'var(--text)'}}>{l.descricao}</div>
+                {(l.clientes?.nome||l.fornecedores?.nome) && (
+                  <div style={{fontSize:11,color:'var(--text3)'}}>{l.clientes?.nome||l.fornecedores?.nome}</div>
+                )}
+              </td>
+              <td>
+                {l.categorias
+                  ? <span className="badge badge-info" style={{fontSize:10}}>{l.categorias.icone} {l.categorias.nome}</span>
+                  : <span style={{color:'var(--text3)',fontSize:11}}>—</span>}
+              </td>
+              <td style={{fontSize:12,color:'var(--text3)'}}>{fmtD(l.data_lancamento)}</td>
+              <td><StatusSelect id={l.id} value={l.status} /></td>
+              <td>
+                <span className={`badge ${l.tipo==='entrada'?'badge-success':'badge-danger'}`} style={{fontSize:10}}>
+                  {l.tipo==='entrada'?'↑ Entrada':'↓ Saída'}
+                </span>
+              </td>
+              <td>
+                <span style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14,
+                  color:l.tipo==='entrada'?'var(--success)':'var(--danger)'}}>
+                  {l.tipo==='entrada'?'+':'-'}{fmt(l.valor)}
+                </span>
+              </td>
+              <td>
+                <div style={{display:'flex',gap:4}}>
+                  {mostrarEditar && (
+                    <button title="Editar" style={{background:'none',border:'none',cursor:'pointer',color:'var(--accent2)',fontSize:14}}
+                      onClick={()=>abrirEdicao(l)}>✏️</button>
+                  )}
+                  <button title="Excluir" style={{background:'none',border:'none',cursor:'pointer',color:'var(--danger)',fontSize:14}}
+                    onClick={()=>deletar(l.id)}>🗑</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {/* Totais */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',borderTop:'2px solid var(--border)'}}>
+        {[
+          { l:'Total Entradas', v:fmt(lista.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0)), c:'var(--success)' },
+          { l:'Total Saídas',   v:fmt(lista.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0)),   c:'var(--danger)'  },
+          { l:'Saldo Período',  v:fmt(lista.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0)-lista.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0)), c:'var(--accent)' },
+        ].map((t,i)=>(
+          <div key={i} style={{padding:'10px 16px',textAlign:'center',borderRight:i<2?'1px solid var(--border)':'none'}}>
+            <div style={{fontSize:10,color:'var(--text3)',marginBottom:2}}>{t.l}</div>
+            <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:800,color:t.c}}>{t.v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="fade-up">
-      <div className="section-header mb-20">
+
+      {/* Header */}
+      <div className="section-header mb-16">
         <div>
           <div className="section-title">Gestão Financeira</div>
-          <div className="section-sub">Dados reais da empresa · {new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</div>
-        </div>
-        <div className="flex gap-8">
-          <button className="btn btn-ghost" onClick={carregarDados}>🔄 Atualizar</button>
-          <button className="btn btn-ghost" onClick={() => openForm?.('conta-pagar')}>+ Conta a Pagar</button>
-          <button className="btn btn-primary" onClick={() => openForm?.('lancamento')}>+ Lançamento</button>
-        </div>
-      </div>
-
-      <div className="tabs">
-        {tabs.map((t,i) => <div key={i} className={`tab ${tab===i?'active':''}`} onClick={() => { setTab(i); setFiltroStatus(''); }}>{t}</div>)}
-      </div>
-
-      {/* ── FLUXO DE CAIXA ── */}
-      {tab === 0 && (
-        <div>
-          <div className="metrics-grid mb-16">
-            {[
-              { label: "Entradas (Mês)", val: fmtK(fluxo.entradas), c: "var(--success)" },
-              { label: "Saídas (Mês)",   val: fmtK(fluxo.saidas),   c: "var(--danger)" },
-              { label: "Saldo do Mês",   val: fmtK(fluxo.saldo),    c: fluxo.saldo >= 0 ? "var(--accent)" : "var(--danger)" },
-              { label: "Lançamentos",    val: lancamentos.length,    c: "var(--accent2)" },
-            ].map((m,i) => (
-              <div key={i} className="metric-card" style={{"--accent-color": m.c}}>
-                <div className="metric-label">{m.label}</div>
-                <div className="metric-value" style={{color: m.c}}>{m.val}</div>
-              </div>
-            ))}
+          <div className="section-sub">
+            <strong style={{color:'var(--accent)'}}>{clienteAtivo?.nome||'—'}</strong>
+            {' · '}{fmtD(dataInicio)} até {fmtD(dataFim)}
           </div>
+        </div>
+        <div className="flex gap-8 flex-wrap">
+          <button className="btn btn-ghost" onClick={carregar}>🔄</button>
+          <button className="btn btn-ghost" onClick={abrirTodos}>📋 Todos</button>
+          <button className="btn btn-ghost" onClick={()=>openForm?.('conta-pagar')}>+ Pagar</button>
+          <button className="btn btn-ghost" onClick={()=>openForm?.('conta-receber')}>+ Receber</button>
+          <button className="btn btn-primary" onClick={()=>openForm?.('lancamento')}>+ Lançamento</button>
+        </div>
+      </div>
 
-          {evolucao.length > 0 && (
-            <div className="card mb-16">
-              <div className="card-header">
-                <span className="card-title">Evolução 12 Meses</span>
-                <div className="flex gap-8 text-xs text-muted">
-                  <span style={{display:'flex',gap:4,alignItems:'center'}}><span style={{width:8,height:8,background:'var(--accent2)',borderRadius:2,display:'inline-block'}}/>Entradas</span>
-                  <span style={{display:'flex',gap:4,alignItems:'center'}}><span style={{width:8,height:8,background:'var(--danger)',borderRadius:2,display:'inline-block'}}/>Saídas</span>
-                </div>
-              </div>
-              <div className="card-body">
-                <div className="bar-chart" style={{height:140}}>
-                  {evolucao.map((e,i) => (
-                    <div key={i} className="bar-group">
-                      <div className="bar" style={{height:`${(e.entradas/maxEv)*100}%`,"--bar-color":"var(--accent2)"}} title={`${e.mes}: ${fmtK(e.entradas)}`}/>
-                      <div className="bar" style={{height:`${(e.saidas/maxEv)*100}%`,"--bar-color":"var(--danger)"}} title={`${e.mes}: ${fmtK(e.saidas)}`}/>
-                    </div>
+      {/* KPIs */}
+      <div className="metrics-grid mb-16">
+        {[
+          { label:'Entradas',     val:fmt(fluxo.entradas), c:'var(--success)' },
+          { label:'Saídas',       val:fmt(fluxo.saidas),   c:'var(--danger)'  },
+          { label:'Saldo',        val:fmt(fluxo.saldo),    c:fluxo.saldo>=0?'var(--accent)':'var(--danger)' },
+          { label:'Lançamentos',  val:lancamentos.length,  c:'var(--accent2)' },
+        ].map((m,i)=>(
+          <div key={i} className="metric-card" style={{'--accent-color':m.c}}>
+            <div className="metric-label">{m.label}</div>
+            <div className="metric-value" style={{color:m.c}}>{m.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs mb-16">
+        {tabs.map((t,i)=>(
+          <div key={i} className={`tab ${tab===i?'active':''}`} onClick={()=>{setTab(i);setFiltroStatus('');}}>{t}</div>
+        ))}
+      </div>
+
+      {/* ── TAB 0: FLUXO ── */}
+      {tab===0 && (
+        <div>
+          {/* Filtro de período */}
+          <div className="card mb-16">
+            <div className="card-body" style={{padding:'14px 20px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+                <span style={{fontSize:12,fontWeight:600,color:'var(--text2)'}}>📅 Período:</span>
+                <input type="date" className="inp" style={{width:145}} value={dataInicio} onChange={e=>setDataInicio(e.target.value)} />
+                <span style={{color:'var(--text3)',fontSize:12}}>até</span>
+                <input type="date" className="inp" style={{width:145}} value={dataFim} onChange={e=>setDataFim(e.target.value)} />
+                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                  {[
+                    {l:'7d',t:'7d'},{l:'30d',t:'30d'},{l:'Mês',t:'mes'},
+                    {l:'Trim.',t:'trim'},{l:'Ano',t:'ano'},
+                  ].map(p=>(
+                    <button key={p.t} className="btn btn-ghost"
+                      style={{padding:'5px 10px',fontSize:11,borderRadius:6}}
+                      onClick={()=>setPeriodo(p.t)}>{p.l}</button>
                   ))}
                 </div>
-                <div style={{display:'flex',gap:6,marginTop:6,justifyContent:'space-between'}}>
-                  {evolucao.map((e,i) => <span key={i} style={{fontSize:10,color:'var(--text3)',flex:1,textAlign:'center'}}>{e.mes}</span>)}
+                <div style={{display:'flex',gap:8,marginLeft:'auto'}}>
+                  <select className="inp" style={{width:120,fontSize:12}} value={filtroTipo} onChange={e=>setFiltroTipo(e.target.value)}>
+                    <option value="">Tudo</option>
+                    <option value="entrada">Entradas</option>
+                    <option value="saida">Saídas</option>
+                  </select>
+                  <input className="inp" placeholder="🔍 Buscar..." style={{width:160}} value={busca} onChange={e=>setBusca(e.target.value)} />
                 </div>
               </div>
             </div>
-          )}
+          </div>
 
+          {/* Gráfico 12 meses */}
+          <div className="card mb-16">
+            <div className="card-header">
+              <span className="card-title">📈 Evolução 12 Meses</span>
+              <div style={{display:'flex',gap:12,fontSize:11}}>
+                <span style={{color:'var(--accent2)'}}>■ Entradas</span>
+                <span style={{color:'var(--danger)'}}>■ Saídas</span>
+              </div>
+            </div>
+            <div className="card-body">
+              {evolucao.every(e=>!e.entradas&&!e.saidas) ? (
+                <div style={{textAlign:'center',padding:32,color:'var(--text3)'}}>
+                  <div style={{fontSize:36,marginBottom:8}}>📊</div>
+                  <div style={{fontSize:14,color:'var(--text2)',fontWeight:600,marginBottom:4}}>Nenhum dado nos últimos 12 meses</div>
+                  <div style={{fontSize:12}}>Os gráficos são alimentados pelos lançamentos confirmados e pendentes.</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{display:'flex',alignItems:'flex-end',gap:4,height:150,paddingBottom:4}}>
+                    {evolucao.map((e,i)=>(
+                      <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,height:'100%',justifyContent:'flex-end'}}>
+                        <div style={{width:'100%',display:'flex',gap:1,alignItems:'flex-end',height:'130px',position:'relative'}}>
+                          {/* Tooltip */}
+                          <div style={{
+                            position:'absolute',bottom:'105%',left:'50%',transform:'translateX(-50%)',
+                            background:'var(--bg)',border:'1px solid var(--border)',borderRadius:6,
+                            padding:'4px 8px',fontSize:10,whiteSpace:'nowrap',display:'none',zIndex:10,
+                            pointerEvents:'none',
+                          }} className="bar-tooltip">
+                            <div style={{color:'var(--accent2)'}}>↑ {fmt(e.entradas)}</div>
+                            <div style={{color:'var(--danger)'}}>↓ {fmt(e.saidas)}</div>
+                          </div>
+                          <div
+                            style={{flex:1,background:'var(--accent2)',borderRadius:'3px 3px 0 0',
+                              height:`${((e.entradas||0)/maxEv)*100}%`,minHeight:(e.entradas||0)>0?3:0,
+                              transition:'height 0.6s ease',opacity:0.9,cursor:'pointer'}}
+                            title={`Entradas ${e.mes}: ${fmt(e.entradas)}`}
+                          />
+                          <div
+                            style={{flex:1,background:'var(--danger)',borderRadius:'3px 3px 0 0',
+                              height:`${((e.saidas||0)/maxEv)*100}%`,minHeight:(e.saidas||0)>0?3:0,
+                              transition:'height 0.6s ease',opacity:0.9,cursor:'pointer'}}
+                            title={`Saídas ${e.mes}: ${fmt(e.saidas)}`}
+                          />
+                        </div>
+                        <span style={{fontSize:9,color:'var(--text3)'}}>{e.mes}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:0,borderTop:'1px solid var(--border)',marginTop:8}}>
+                    {[
+                      {l:'Total Entradas 12m',v:fmtK(evolucao.reduce((s,e)=>s+(e.entradas||0),0)),c:'var(--accent2)'},
+                      {l:'Total Saídas 12m',v:fmtK(evolucao.reduce((s,e)=>s+(e.saidas||0),0)),c:'var(--danger)'},
+                      {l:'Resultado 12m',v:fmtK(evolucao.reduce((s,e)=>s+(e.saldo||0),0)),c:'var(--accent)'},
+                    ].map((s,i)=>(
+                      <div key={i} style={{textAlign:'center',padding:'12px 0',borderRight:i<2?'1px solid var(--border)':'none'}}>
+                        <div style={{fontSize:10,color:'var(--text3)',marginBottom:3}}>{s.l}</div>
+                        <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:800,color:s.c}}>{s.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Tabela de lançamentos do período */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">Movimentações Recentes</span>
-              <button className="btn btn-ghost" style={{fontSize:11}} onClick={() => openForm?.('lancamento')}>+ Novo</button>
+              <span className="card-title">
+                Lançamentos · {fmtD(dataInicio)} – {fmtD(dataFim)}
+                <span style={{marginLeft:8,fontSize:12,color:'var(--text3)',fontWeight:400}}>
+                  ({lancamentos.filter(l=>!filtroTipo||l.tipo===filtroTipo).length} registros)
+                </span>
+              </span>
+              <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('lancamento')}>+ Novo</button>
             </div>
             {loading ? (
-              <div className="empty">Carregando...</div>
-            ) : lancamentos.length === 0 ? (
+              <div style={{textAlign:'center',padding:32,color:'var(--text3)'}}>⏳ Carregando...</div>
+            ) : lancamentos.filter(l=>!filtroTipo||l.tipo===filtroTipo).length === 0 ? (
               <div className="empty">
-                <div style={{fontSize:32,marginBottom:8}}>💸</div>
-                <div>Nenhum lançamento ainda.</div>
-                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('lancamento')}>+ Primeiro Lançamento</button>
+                <div style={{fontSize:36,marginBottom:8}}>📋</div>
+                <div style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>Nenhum lançamento neste período</div>
+                <button className="btn btn-primary" onClick={()=>openForm?.('lancamento')}>+ Novo Lançamento</button>
               </div>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Status</th><th>Valor</th><th></th></tr></thead>
-                  <tbody>
-                    {lancamentos.map(t => (
-                      <tr key={t.id}>
-                        <td><div className="primary" style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.descricao}</div>
-                          {(t.clientes?.nome || t.fornecedores?.nome) && <div style={{fontSize:11,color:'var(--text3)'}}>{t.clientes?.nome || t.fornecedores?.nome}</div>}
-                        </td>
-                        <td>{t.categorias ? <span className="badge badge-info">{t.categorias.icone} {t.categorias.nome}</span> : <span className="text-muted">—</span>}</td>
-                        <td>{new Date(t.data_lancamento+'T12:00:00').toLocaleDateString('pt-BR')}</td>
-                        <td>{statusBadge(t.status)}</td>
-                        <td className={`money ${t.tipo==='entrada'?'pos':'neg'}`}>{t.tipo==='entrada'?'+':'-'}{fmt(Math.abs(t.valor))}</td>
-                        <td><button className="btn btn-ghost btn-icon" style={{fontSize:12,color:'var(--danger)'}} onClick={() => deletarLancamento(t.id)}>🗑</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <TabelaLancamentos lista={lancamentos.filter(l=>(!filtroTipo||l.tipo===filtroTipo)&&(!busca||l.descricao?.toLowerCase().includes(busca.toLowerCase())))} />
             )}
           </div>
         </div>
       )}
 
-      {/* ── DRE GERENCIAL ── */}
-      {tab === 1 && (
+      {/* ── TAB 1: DRE ── */}
+      {tab===1 && (
         <div className="card">
-          <div className="card-header"><span className="card-title">DRE Gerencial — {new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</span></div>
+          <div className="card-header">
+            <span className="card-title">DRE Gerencial</span>
+            <span style={{fontSize:12,color:'var(--text3)'}}>{fmtD(dataInicio)} – {fmtD(dataFim)}</span>
+          </div>
           <div className="card-body">
-            {[
-              { label: "RECEITA BRUTA",    val: fluxo.entradas, bold:true, border:true },
-              { label: "(-) Deduções estimadas (10%)", val: -(fluxo.entradas*0.10), indent:true },
-              { label: "RECEITA LÍQUIDA",  val: fluxo.entradas*0.90, bold:true, border:true, accent:"var(--accent2)" },
-              { label: "(-) Custos operacionais (40%)", val: -(fluxo.saidas*0.40), indent:true },
-              { label: "LUCRO BRUTO",      val: fluxo.entradas*0.90 - fluxo.saidas*0.40, bold:true, border:true, accent:"var(--accent)" },
-              { label: "(-) Despesas administrativas", val: -(fluxo.saidas*0.60), indent:true },
-              { label: "RESULTADO OPERACIONAL", val: fluxo.saldo, bold:true, accent: fluxo.saldo>=0?"var(--success)":"var(--danger)" },
-            ].map((row,i) => (
-              <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'9px 12px',borderBottom:row.border?'2px solid var(--border2)':'1px solid var(--border)',background:row.bold?'rgba(255,255,255,0.02)':'transparent',paddingLeft:row.indent?32:12,borderRadius:4,marginBottom:1}}>
-                <span style={{fontSize:13,fontWeight:row.bold?700:400,color:row.bold?'var(--text)':'var(--text2)',fontFamily:row.bold?'var(--font-head)':'var(--font-body)'}}>{row.label}</span>
-                <span style={{fontSize:13,fontWeight:row.bold?700:500,color:row.accent||(row.val<0?'var(--danger)':'var(--text)')}}>{fmt(row.val)}</span>
-              </div>
-            ))}
-            <div className="alert alert-info" style={{marginTop:16}}>
-              <span className="alert-icon">ℹ️</span>
-              <div className="alert-content">
-                <div className="alert-title">DRE baseado nos lançamentos reais</div>
-                <div className="alert-desc">Para um DRE completo, cadastre todos os lançamentos com categorias corretas. Os percentuais são estimativas automáticas.</div>
-              </div>
-            </div>
+            {(() => {
+              const rec=fluxo.entradas,ded=rec*0.10,rl=rec-ded,cst=fluxo.saidas*0.40,lb=rl-cst,dsp=fluxo.saidas*0.60,ebt=lb-dsp,irpj=Math.max(ebt*0.15,0),ll=ebt-irpj;
+              return [
+                {d:'RECEITA BRUTA',v:rec,bold:true},{d:'(-) Deduções (~10%)',v:-ded,bold:false},
+                {d:'RECEITA LÍQUIDA',v:rl,bold:true},{d:'(-) Custos (~40% saídas)',v:-cst,bold:false},
+                {d:'LUCRO BRUTO',v:lb,bold:true},{d:'(-) Despesas (~60% saídas)',v:-dsp,bold:false},
+                {d:'EBITDA',v:ebt,bold:true},{d:'(-) IRPJ/CSLL (~15%)',v:-irpj,bold:false},
+                {d:'LUCRO LÍQUIDO',v:ll,bold:true},
+              ].map((r,i)=>(
+                <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'10px 0',borderBottom:'1px solid var(--border)',
+                  background:r.bold?'rgba(255,255,255,0.02)':'transparent'}}>
+                  <span style={{fontSize:13,fontWeight:r.bold?700:400,color:r.bold?'var(--text)':'var(--text2)'}}>{r.d}</span>
+                  <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                    {rec>0&&r.bold && <span style={{fontSize:10,color:'var(--text3)'}}>({((r.v/rec)*100).toFixed(1)}%)</span>}
+                    <span style={{fontFamily:'var(--font-head)',fontWeight:r.bold?800:500,fontSize:r.bold?16:14,
+                      color:r.v>=0?'var(--success)':'var(--danger)'}}>{fmt(r.v)}</span>
+                  </div>
+                </div>
+              ));
+            })()}
           </div>
         </div>
       )}
 
-      {/* ── CONTAS A PAGAR ── */}
-      {tab === 2 && (
+      {/* ── TAB 2: CONTAS A PAGAR ── */}
+      {tab===2 && (
         <div>
           <div className="metrics-grid mb-16">
             {[
-              { label: "A Vencer",    val: fmtK(totaisPagar.pendente), c: "var(--warn)" },
-              { label: "Vencido",     val: fmtK(totaisPagar.vencido),  c: "var(--danger)" },
-              { label: "Pago no Mês", val: fmtK(totaisPagar.pago),     c: "var(--success)" },
-              { label: "Total",       val: fmtK(totaisPagar.pendente + totaisPagar.vencido), c: "var(--accent2)" },
-            ].map((m,i) => (
-              <div key={i} className="metric-card" style={{"--accent-color":m.c}}>
+              {label:'A Vencer',val:fmt(totaisPagar.pendente),c:'var(--warn)'},
+              {label:'Vencido',val:fmt(totaisPagar.vencido),c:'var(--danger)'},
+              {label:'Pago',val:fmt(totaisPagar.pago),c:'var(--success)'},
+              {label:'Total',val:fmt(Object.values(totaisPagar).reduce((s,v)=>s+v,0)),c:'var(--text2)'},
+            ].map((m,i)=>(
+              <div key={i} className="metric-card" style={{'--accent-color':m.c}}>
                 <div className="metric-label">{m.label}</div>
                 <div className="metric-value" style={{color:m.c}}>{m.val}</div>
               </div>
             ))}
           </div>
-
           <div className="card">
             <div className="card-header">
               <span className="card-title">Contas a Pagar</span>
               <div className="flex gap-8">
-                <select className="inp" style={{width:160,padding:'6px 10px'}} value={filtroStatus} onChange={e=>{setFiltroStatus(e.target.value);setTimeout(carregarDados,0)}}>
-                  <option value="">Todos os status</option>
-                  <option value="pendente">Pendente</option>
-                  <option value="vencido">Vencido</option>
-                  <option value="pago">Pago</option>
-                  <option value="cancelado">Cancelado</option>
+                <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
+                  <option value="">Todos</option><option value="pendente">Pendente</option>
+                  <option value="pago">Pago</option><option value="vencido">Vencido</option>
                 </select>
-                <button className="btn btn-primary" onClick={() => openForm?.('conta-pagar')}>+ Nova</button>
+                <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-pagar')}>+ Nova</button>
               </div>
             </div>
-            {loading ? <div className="empty">Carregando...</div> :
-             contasPagar.length === 0 ? (
+            {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text3)'}}>⏳ Carregando...</div> :
+             contasPagar.length===0 ? (
               <div className="empty">
-                <div style={{fontSize:32,marginBottom:8}}>📋</div>
-                <div>Nenhuma conta a pagar{filtroStatus ? ` com status "${filtroStatus}"` : ''}.</div>
-                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('conta-pagar')}>+ Cadastrar</button>
+                <div style={{fontSize:32,marginBottom:8}}>💸</div>
+                <div>Nenhuma conta a pagar cadastrada.</div>
+                <button className="btn btn-primary" style={{marginTop:12}} onClick={()=>openForm?.('conta-pagar')}>+ Cadastrar</button>
               </div>
             ) : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Descrição</th><th>Fornecedor</th><th>Vencimento</th><th>Status</th><th>Valor</th><th>Ação</th></tr></thead>
+                  <thead><tr><th>Descrição</th><th>Fornecedor</th><th>Vencimento</th><th>Status</th><th>Valor</th><th></th></tr></thead>
                   <tbody>
-                    {contasPagar.map(c => (
+                    {contasPagar.map(c=>(
                       <tr key={c.id}>
                         <td className="primary">{c.descricao}</td>
-                        <td>{c.fornecedores?.nome || <span className="text-muted">—</span>}</td>
-                        <td style={{color: new Date(c.vencimento) < new Date() && c.status==='pendente' ? 'var(--danger)' : 'var(--text2)'}}>
-                          {new Date(c.vencimento+'T12:00:00').toLocaleDateString('pt-BR')}
-                        </td>
-                        <td>{statusBadge(c.status)}</td>
-                        <td className="money">{fmt(c.valor)}</td>
-                        <td>
-                          {c.status === 'pendente' || c.status === 'vencido' ? (
-                            <button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}} onClick={() => marcarPago(c.id)}>✓ Pagar</button>
-                          ) : <span style={{fontSize:11,color:'var(--text3)'}}>—</span>}
-                        </td>
+                        <td style={{fontSize:12,color:'var(--text2)'}}>{c.fornecedores?.nome||'—'}</td>
+                        <td style={{fontSize:12,color:new Date(c.vencimento)<new Date()&&c.status==='pendente'?'var(--danger)':'var(--text3)'}}>{fmtD(c.vencimento)}</td>
+                        <td><span className={`badge ${c.status==='pago'?'badge-success':c.status==='vencido'?'badge-danger':'badge-warn'}`}>{c.status}</span></td>
+                        <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--danger)'}}>{fmt(c.valor)}</td>
+                        <td>{c.status==='pendente'&&<button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}}
+                          onClick={async()=>{await ContasPagar.pagar(c.id,new Date().toISOString().slice(0,10),c.valor);carregar();}}>✓ Pagar</button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1214,69 +1440,150 @@ function Financeiro({ empresaId, openForm, recarregar }) {
         </div>
       )}
 
-      {/* ── CONTAS A RECEBER ── */}
-      {tab === 3 && (
+      {/* ── TAB 3: CONTAS A RECEBER ── */}
+      {tab===3 && (
         <div>
           <div className="metrics-grid mb-16">
             {[
-              { label: "A Receber",       val: fmtK(totaisReceber.pendente),  c: "var(--accent2)" },
-              { label: "Vencido",         val: fmtK(totaisReceber.vencido),   c: "var(--danger)" },
-              { label: "Recebido no Mês", val: fmtK(totaisReceber.recebido),  c: "var(--success)" },
-              { label: "Total Pendente",  val: fmtK(totaisReceber.pendente + totaisReceber.vencido), c: "var(--warn)" },
-            ].map((m,i) => (
-              <div key={i} className="metric-card" style={{"--accent-color":m.c}}>
+              {label:'A Receber',val:fmt(totaisReceber.pendente),c:'var(--accent2)'},
+              {label:'Vencido',val:fmt(totaisReceber.vencido),c:'var(--danger)'},
+              {label:'Recebido',val:fmt(totaisReceber.recebido),c:'var(--success)'},
+              {label:'Total',val:fmt(Object.values(totaisReceber).reduce((s,v)=>s+v,0)),c:'var(--text2)'},
+            ].map((m,i)=>(
+              <div key={i} className="metric-card" style={{'--accent-color':m.c}}>
                 <div className="metric-label">{m.label}</div>
                 <div className="metric-value" style={{color:m.c}}>{m.val}</div>
               </div>
             ))}
           </div>
-
           <div className="card">
             <div className="card-header">
               <span className="card-title">Contas a Receber</span>
               <div className="flex gap-8">
-                <select className="inp" style={{width:160,padding:'6px 10px'}} value={filtroStatus} onChange={e=>{setFiltroStatus(e.target.value);setTimeout(carregarDados,0)}}>
-                  <option value="">Todos os status</option>
-                  <option value="pendente">Pendente</option>
-                  <option value="vencido">Vencido</option>
-                  <option value="recebido">Recebido</option>
-                  <option value="parcial">Parcial</option>
+                <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
+                  <option value="">Todos</option><option value="pendente">Pendente</option>
+                  <option value="recebido">Recebido</option><option value="vencido">Vencido</option>
                 </select>
-                <button className="btn btn-primary" onClick={() => openForm?.('conta-receber')}>+ Nova</button>
+                <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-receber')}>+ Nova</button>
               </div>
             </div>
-            {loading ? <div className="empty">Carregando...</div> :
-             contasReceber.length === 0 ? (
+            {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text3)'}}>⏳ Carregando...</div> :
+             contasReceber.length===0 ? (
               <div className="empty">
                 <div style={{fontSize:32,marginBottom:8}}>💰</div>
-                <div>Nenhuma conta a receber{filtroStatus ? ` com status "${filtroStatus}"` : ''}.</div>
-                <button className="btn btn-primary" style={{marginTop:12}} onClick={() => openForm?.('conta-receber')}>+ Cadastrar</button>
+                <div>Nenhuma conta a receber cadastrada.</div>
+                <button className="btn btn-primary" style={{marginTop:12}} onClick={()=>openForm?.('conta-receber')}>+ Cadastrar</button>
               </div>
             ) : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Descrição</th><th>Cliente</th><th>Vencimento</th><th>NF</th><th>Status</th><th>Valor</th><th>Ação</th></tr></thead>
+                  <thead><tr><th>Descrição</th><th>Cliente</th><th>Vencimento</th><th>Status</th><th>Valor</th><th></th></tr></thead>
                   <tbody>
-                    {contasReceber.map(c => (
+                    {contasReceber.map(c=>(
                       <tr key={c.id}>
                         <td className="primary">{c.descricao}</td>
-                        <td>{c.clientes?.nome || <span className="text-muted">—</span>}</td>
-                        <td style={{color: new Date(c.vencimento) < new Date() && c.status==='pendente' ? 'var(--danger)' : 'var(--text2)'}}>
-                          {new Date(c.vencimento+'T12:00:00').toLocaleDateString('pt-BR')}
-                        </td>
-                        <td style={{color:'var(--text3)'}}>{c.nota_fiscal_numero || '—'}</td>
-                        <td>{statusBadge(c.status)}</td>
-                        <td className="money pos">{fmt(c.valor)}</td>
-                        <td>
-                          {c.status === 'pendente' || c.status === 'vencido' ? (
-                            <button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}} onClick={() => marcarRecebido(c.id)}>✓ Receber</button>
-                          ) : <span style={{fontSize:11,color:'var(--text3)'}}>—</span>}
-                        </td>
+                        <td style={{fontSize:12,color:'var(--text2)'}}>{c.clientes?.nome||'—'}</td>
+                        <td style={{fontSize:12,color:new Date(c.vencimento)<new Date()&&c.status==='pendente'?'var(--danger)':'var(--text3)'}}>{fmtD(c.vencimento)}</td>
+                        <td><span className={`badge ${c.status==='recebido'?'badge-success':c.status==='vencido'?'badge-danger':'badge-warn'}`}>{c.status}</span></td>
+                        <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--success)'}}>{fmt(c.valor)}</td>
+                        <td>{c.status==='pendente'&&<button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}}
+                          onClick={async()=>{await ContasReceber.receber(c.id,new Date().toISOString().slice(0,10),c.valor);carregar();}}>✓ Receber</button>}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIÇÃO */}
+      {editando && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:20}}
+          onClick={e=>e.target===e.currentTarget&&setEditando(null)}>
+          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,padding:32,width:'100%',maxWidth:480}}>
+            <div style={{fontFamily:'var(--font-head)',fontSize:17,fontWeight:800,marginBottom:20}}>✏️ Editar Lançamento</div>
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div>
+                <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Tipo</label>
+                <div style={{display:'flex',gap:8}}>
+                  {['entrada','saida'].map(t=>(
+                    <div key={t} onClick={()=>setEditForm(f=>({...f,tipo:t}))}
+                      style={{flex:1,padding:'8px 0',borderRadius:8,border:`2px solid ${editForm.tipo===t?(t==='entrada'?'var(--success)':'var(--danger)'):'var(--border)'}`,
+                        background:editForm.tipo===t?(t==='entrada'?'rgba(0,212,160,0.08)':'rgba(255,71,87,0.08)'):'transparent',
+                        cursor:'pointer',textAlign:'center',fontSize:13,fontWeight:600,
+                        color:editForm.tipo===t?(t==='entrada'?'var(--success)':'var(--danger)'):'var(--text3)'}}>
+                      {t==='entrada'?'↑ Entrada':'↓ Saída'}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {[
+                {label:'Descrição',key:'descricao',placeholder:'Ex: Receita de serviços'},
+                {label:'Valor (R$)',key:'valor',type:'number',placeholder:'0,00'},
+                {label:'Data',key:'data_lancamento',type:'date'},
+                {label:'Observação',key:'observacao',placeholder:'Opcional'},
+              ].map(f=>(
+                <div key={f.key}>
+                  <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>{f.label}</label>
+                  <input className="inp" type={f.type||'text'} placeholder={f.placeholder}
+                    value={editForm[f.key]||''} onChange={e=>setEditForm(ef=>({...ef,[f.key]:e.target.value}))} />
+                </div>
+              ))}
+              <div>
+                <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Status</label>
+                <select className="inp" value={editForm.status} onChange={e=>setEditForm(f=>({...f,status:e.target.value}))}>
+                  <option value="confirmado">✓ Confirmado</option>
+                  <option value="pendente">⏳ Pendente</option>
+                  <option value="cancelado">✕ Cancelado</option>
+                </select>
+              </div>
+              <div style={{display:'flex',gap:10,marginTop:8}}>
+                <button style={{flex:1,padding:11,borderRadius:'var(--radius)',background:'transparent',color:'var(--text2)',border:'1px solid var(--border2)',cursor:'pointer'}}
+                  onClick={()=>setEditando(null)}>Cancelar</button>
+                <button style={{flex:2,padding:11,borderRadius:'var(--radius)',background:'var(--accent)',color:'var(--bg)',border:'none',cursor:'pointer',fontFamily:'var(--font-head)',fontWeight:700}}
+                  onClick={salvarEdicao} disabled={!!salvando}>
+                  {salvando?'⏳ Salvando...':'✅ Salvar Alterações'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL TODOS OS LANÇAMENTOS */}
+      {showTodos && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.88)',display:'flex',flexDirection:'column',zIndex:1000}}>
+          <div style={{background:'var(--card)',borderBottom:'1px solid var(--border)',padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+            <div>
+              <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:800}}>
+                📋 Todos os Lançamentos — {clienteAtivo?.nome}
+              </div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:1}}>
+                {todosLanc.length} total · {fmt(todosLanc.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0))} entradas · {fmt(todosLanc.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0))} saídas
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <input className="inp" placeholder="🔍 Buscar..." style={{width:180}} value={busca} onChange={e=>setBusca(e.target.value)} />
+              <select className="inp" style={{width:110}} value={filtroTipo} onChange={e=>setFiltroTipo(e.target.value)}>
+                <option value="">Todos</option><option value="entrada">Entradas</option><option value="saida">Saídas</option>
+              </select>
+              <select className="inp" style={{width:120}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
+                <option value="">Status: todos</option>
+                <option value="confirmado">Confirmado</option>
+                <option value="pendente">Pendente</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+              <button className="btn btn-primary" onClick={()=>openForm?.('lancamento')}>+ Novo</button>
+              <button className="btn btn-ghost btn-icon" onClick={()=>{setShowTodos(false);setBusca('');setFiltroTipo('');setFiltroStatus('');}}>✕</button>
+            </div>
+          </div>
+          <div style={{flex:1,overflowY:'auto'}}>
+            {loadTodos ? (
+              <div style={{textAlign:'center',padding:48,color:'var(--text3)'}}>⏳ Carregando...</div>
+            ) : (
+              <TabelaLancamentos lista={lancFiltrados} />
             )}
           </div>
         </div>

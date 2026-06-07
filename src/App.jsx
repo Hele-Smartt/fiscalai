@@ -1081,14 +1081,16 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
 
   function abrirTodos() { setShowTodos(true); carregarTodos(); }
 
-  // Período rápido
+  // Período rápido (datas em horário local, sem deslocamento de fuso)
   function setPeriodo(tipo) {
     const h = new Date();
-    if (tipo === 'mes')  { setDataInicio(new Date(h.getFullYear(),h.getMonth(),1).toISOString().slice(0,10)); setDataFim(new Date(h.getFullYear(),h.getMonth()+1,0).toISOString().slice(0,10)); }
-    if (tipo === 'trim') { setDataInicio(new Date(h.getFullYear(),Math.floor(h.getMonth()/3)*3,1).toISOString().slice(0,10)); setDataFim(new Date(h.getFullYear(),Math.floor(h.getMonth()/3)*3+3,0).toISOString().slice(0,10)); }
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (tipo === 'mes')  { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),1)));   setDataFim(iso(new Date(h.getFullYear(),h.getMonth()+1,0))); }
+    if (tipo === 'trim') { const q=Math.floor(h.getMonth()/3)*3; setDataInicio(iso(new Date(h.getFullYear(),q,1))); setDataFim(iso(new Date(h.getFullYear(),q+3,0))); }
     if (tipo === 'ano')  { setDataInicio(`${h.getFullYear()}-01-01`); setDataFim(`${h.getFullYear()}-12-31`); }
-    if (tipo === '7d')   { setDataInicio(new Date(h-7*86400000).toISOString().slice(0,10)); setDataFim(h.toISOString().slice(0,10)); }
-    if (tipo === '30d')  { setDataInicio(new Date(h-30*86400000).toISOString().slice(0,10)); setDataFim(h.toISOString().slice(0,10)); }
+    if (tipo === '7d')   { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),h.getDate()-6)));  setDataFim(iso(h)); }
+    if (tipo === '15d')  { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),h.getDate()-14))); setDataFim(iso(h)); }
+    if (tipo === '30d')  { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),h.getDate()-29))); setDataFim(iso(h)); }
   }
 
   const maxEv = Math.max(...evolucao.map(e=>Math.max(e.entradas||0,e.saidas||0)),1);
@@ -1238,7 +1240,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                 <input type="date" className="inp" style={{width:145}} value={dataFim} onChange={e=>setDataFim(e.target.value)} />
                 <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                   {[
-                    {l:'7d',t:'7d'},{l:'30d',t:'30d'},{l:'Mês',t:'mes'},
+                    {l:'7d',t:'7d'},{l:'15d',t:'15d'},{l:'30d',t:'30d'},{l:'Mês',t:'mes'},
                     {l:'Trim.',t:'trim'},{l:'Ano',t:'ano'},
                   ].map(p=>(
                     <button key={p.t} className="btn btn-ghost"
@@ -1426,7 +1428,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                         <td className="primary">{c.descricao}</td>
                         <td style={{fontSize:12,color:'var(--text2)'}}>{c.fornecedores?.nome||'—'}</td>
                         <td style={{fontSize:12,color:new Date(c.vencimento)<new Date()&&c.status==='pendente'?'var(--danger)':'var(--text3)'}}>{fmtD(c.vencimento)}</td>
-                        <td><span className={`badge ${c.status==='pago'?'badge-success':c.status==='vencido'?'badge-danger':'badge-warn'}`}>{c.status}</span></td>
+                        <td>{(()=>{const atrasado=c.status==='pendente'&&(c.vencimento||'9999')<new Date().toISOString().slice(0,10);const st=atrasado?'vencido':c.status;return <span className={`badge ${st==='pago'?'badge-success':st==='vencido'?'badge-danger':'badge-warn'}`}>{st==='vencido'?'⚠ atrasado':st}</span>;})()}</td>
                         <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--danger)'}}>{fmt(c.valor)}</td>
                         <td>{c.status==='pendente'&&<button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}}
                           onClick={async()=>{await ContasPagar.pagar(c.id,new Date().toISOString().slice(0,10),c.valor);carregar();}}>✓ Pagar</button>}</td>
@@ -1484,7 +1486,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                         <td className="primary">{c.descricao}</td>
                         <td style={{fontSize:12,color:'var(--text2)'}}>{c.clientes?.nome||'—'}</td>
                         <td style={{fontSize:12,color:new Date(c.vencimento)<new Date()&&c.status==='pendente'?'var(--danger)':'var(--text3)'}}>{fmtD(c.vencimento)}</td>
-                        <td><span className={`badge ${c.status==='recebido'?'badge-success':c.status==='vencido'?'badge-danger':'badge-warn'}`}>{c.status}</span></td>
+                        <td>{(()=>{const atrasado=c.status==='pendente'&&(c.vencimento||'9999')<new Date().toISOString().slice(0,10);const st=atrasado?'vencido':c.status;return <span className={`badge ${st==='recebido'?'badge-success':st==='vencido'?'badge-danger':'badge-warn'}`}>{st==='vencido'?'⚠ em atraso':st}</span>;})()}</td>
                         <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--success)'}}>{fmt(c.valor)}</td>
                         <td>{c.status==='pendente'&&<button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}}
                           onClick={async()=>{await ContasReceber.receber(c.id,new Date().toISOString().slice(0,10),c.valor);carregar();}}>✓ Receber</button>}</td>

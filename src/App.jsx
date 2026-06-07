@@ -16,6 +16,7 @@ import { ClienteProvider, useCliente } from "./lib/ClienteContext";
 import TelaInicial from "./pages/TelaInicial";
 import ClienteBar from "./components/ClienteBar";
 import NovoCliente from "./pages/forms/NovoCliente";
+import CategoriasFinanceiras from "./pages/CategoriasFinanceiras";
 import Login from "./pages/Login";
 import { supabase } from "./lib/supabase";
 import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
@@ -2357,12 +2358,24 @@ function ClientesFornecedores({ empresaId, clienteId, openForm }) {
   );
 }
 
-function Configuracoes() {
+function Configuracoes({ navigate }) {
   return (
     <div className="fade-up">
       <div className="section-header mb-20">
         <div><div className="section-title">Configurações</div><div className="section-sub">Empresa, usuários, segurança e integrações</div></div>
       </div>
+
+      <div className="card mb-16" style={{ cursor: "pointer" }} onClick={() => navigate && navigate("categorias")}>
+        <div className="card-body" style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ fontSize: 26 }}>🗂️</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>Categorias Financeiras</div>
+            <div style={{ fontSize: 12, color: "var(--text3)" }}>Plano de contas em árvore (Receitas, Despesas e Transferências) — por cliente</div>
+          </div>
+          <span style={{ color: "var(--accent)", fontSize: 18 }}>→</span>
+        </div>
+      </div>
+
       <div className="grid-2">
         <div className="card mb-16">
           <div className="card-header"><span className="card-title">Dados da Empresa</span></div>
@@ -2518,13 +2531,13 @@ function AppWithFormsAndCliente() {
   const openForm  = (f) => setFormPage(f);
   const closeForm = ()  => { setFormPage(null); carregarDados(); };
 
-  const pageProps = { empresa, empresaId: empresa?.id, clienteId: clienteId||null, dbData, recarregar: carregarDados, openForm };
+  const pageProps = { empresa, empresaId: empresa?.id, clienteId: clienteId||null, dbData, recarregar: carregarDados, openForm, navigate };
   const PAGES = {
     dashboard: Dashboard, financeiro: Financeiro, tributario: Tributario,
     creditos: Creditos, ia: IAChat, estrategico: Estrategico,
     relatorios: RelatoriosPage, nfe: ImportarNFe,
     conciliacao: ConciliacaoBancaria, bancario: GestaoBancaria, contatos: ClientesFornecedores,
-    usuarios: Usuarios, config: Configuracoes,
+    usuarios: Usuarios, config: Configuracoes, categorias: CategoriasFinanceiras,
   };
   const Page = PAGES[page] || Dashboard;
   const iniciais = perfil?.nome?.split(' ').slice(0,2).map(n=>n[0]).join('').toUpperCase() || '??';
@@ -2570,6 +2583,7 @@ function AppWithFormsAndCliente() {
     relatorios: "Relatórios", nfe: "Importar NF-e",
     conciliacao: "Conciliação Bancária", contatos: "Clientes & Fornecedores",
     usuarios: "Usuários & Permissões", config: "Configurações",
+    categorias: "Categorias Financeiras",
   };
 
   return (

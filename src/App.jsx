@@ -19,7 +19,7 @@ import NovoCliente from "./pages/forms/NovoCliente";
 import CategoriasFinanceiras from "./pages/CategoriasFinanceiras";
 import Login from "./pages/Login";
 import { supabase } from "./lib/supabase";
-import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Dashboard as DashboardDB } from "./lib/db";
+import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Fluxo, Dashboard as DashboardDB } from "./lib/db";
 
 // ─── PALETTE & TOKENS ───────────────────────────────────────────────────────
 const CSS = `
@@ -960,6 +960,8 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   const [contasReceber, setContasReceber] = useState([]);
   const [totaisPagar,   setTotaisPagar]   = useState({ pendente:0, vencido:0, pago:0 });
   const [totaisReceber, setTotaisReceber] = useState({ pendente:0, vencido:0, recebido:0 });
+  const [fluxoCaixa,    setFluxoCaixa]    = useState({ projetado:[], realizado:[] });
+  const [fluxoView,     setFluxoView]     = useState('projetado'); // 'projetado' | 'realizado'
 
   // Modal edição
   const [editando,   setEditando]   = useState(null);
@@ -981,8 +983,16 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   async function carregar() {
     setLoading(true);
     try {
-      if (tab === 0 || tab === 1) {
-        // Busca lançamentos no período selecionado
+      if (tab === 0) {
+        // Fluxo de Caixa automático (Projetado + Realizado) a partir dos títulos e lançamentos
+        const fc = await Fluxo.caixa(empresaId, clienteId, dataInicio, dataFim);
+        setFluxoCaixa(fc);
+        // Evolução 12 meses (independente do filtro de período)
+        const ev = await Lancamentos.evolucao12Meses(empresaId, clienteId);
+        setEvolucao(ev);
+      }
+      if (tab === 1) {
+        // DRE: lançamentos do período selecionado
         let q = supabase
           .from('lancamentos')
           .select('*, categorias(nome,cor,icone), clientes(nome), fornecedores(nome)')
@@ -995,15 +1005,9 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
         const { data: lData } = await q;
         const lancs = lData || [];
         setLancamentos(lancs);
-
-        // Calcula fluxo do período
         const entradas = lancs.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0);
         const saidas   = lancs.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0);
         setFluxo({ entradas, saidas, saldo: entradas - saidas });
-
-        // Evolução 12 meses (independente do filtro de período)
-        const ev = await Lancamentos.evolucao12Meses(empresaId, clienteId);
-        setEvolucao(ev);
       }
       if (tab === 2) {
         const [res, tot] = await Promise.all([
@@ -1104,6 +1108,26 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   });
   const totalEntradas = lancFiltrados.filter(l=>l.tipo==='entrada').reduce((s,l)=>s+Number(l.valor),0);
   const totalSaidas   = lancFiltrados.filter(l=>l.tipo==='saida').reduce((s,l)=>s+Number(l.valor),0);
+
+  // ── Fluxo de Caixa (Projetado / Realizado) ──
+  const fluxoLista = (fluxoView==='projetado' ? fluxoCaixa.projetado : fluxoCaixa.realizado)
+    .filter(x => !busca || x.descricao?.toLowerCase().includes(busca.toLowerCase()))
+    .filter(x => !filtroTipo || x.tipo===filtroTipo);
+  const fluxoEntradas = fluxoLista.filter(x=>x.tipo==='entrada').reduce((s,x)=>s+x.valor,0);
+  const fluxoSaidas   = fluxoLista.filter(x=>x.tipo==='saida').reduce((s,x)=>s+x.valor,0);
+  // agrupa por data e calcula saldo acumulado
+  const fluxoPorData = {};
+  fluxoLista.forEach(x => {
+    (fluxoPorData[x.data] ||= { entradas:0, saidas:0 });
+    if (x.tipo==='entrada') fluxoPorData[x.data].entradas += x.valor;
+    else fluxoPorData[x.data].saidas += x.valor;
+  });
+  let acumFluxo = 0;
+  const fluxoLinhas = Object.keys(fluxoPorData).sort().map(d => {
+    const e = fluxoPorData[d].entradas, s = fluxoPorData[d].saidas;
+    acumFluxo += (e - s);
+    return { data:d, entradas:e, saidas:s, saldoDia:e-s, acumulado:acumFluxo };
+  });
 
   const StatusSelect = ({ id, value }) => (
     <select
@@ -1209,12 +1233,17 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
 
       {/* KPIs */}
       <div className="metrics-grid mb-16">
-        {[
+        {(tab===0 ? [
+          { label: fluxoView==='projetado'?'Entradas Previstas':'Entradas Realizadas', val:fmt(fluxoEntradas), c:'var(--success)' },
+          { label: fluxoView==='projetado'?'Saídas Previstas':'Saídas Realizadas',     val:fmt(fluxoSaidas),   c:'var(--danger)'  },
+          { label: fluxoView==='projetado'?'Saldo Projetado':'Saldo Realizado',        val:fmt(fluxoEntradas-fluxoSaidas), c:(fluxoEntradas-fluxoSaidas)>=0?'var(--accent)':'var(--danger)' },
+          { label:'Títulos',     val:fluxoLista.length, c:'var(--accent2)' },
+        ] : [
           { label:'Entradas',     val:fmt(fluxo.entradas), c:'var(--success)' },
           { label:'Saídas',       val:fmt(fluxo.saidas),   c:'var(--danger)'  },
           { label:'Saldo',        val:fmt(fluxo.saldo),    c:fluxo.saldo>=0?'var(--accent)':'var(--danger)' },
           { label:'Lançamentos',  val:lancamentos.length,  c:'var(--accent2)' },
-        ].map((m,i)=>(
+        ]).map((m,i)=>(
           <div key={i} className="metric-card" style={{'--accent-color':m.c}}>
             <div className="metric-label">{m.label}</div>
             <div className="metric-value" style={{color:m.c}}>{m.val}</div>
@@ -1328,27 +1357,116 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
             </div>
           </div>
 
-          {/* Tabela de lançamentos do período */}
+          {/* Visões do Fluxo de Caixa */}
           <div className="card">
-            <div className="card-header">
-              <span className="card-title">
-                Lançamentos · {fmtD(dataInicio)} – {fmtD(dataFim)}
-                <span style={{marginLeft:8,fontSize:12,color:'var(--text3)',fontWeight:400}}>
-                  ({lancamentos.filter(l=>!filtroTipo||l.tipo===filtroTipo).length} registros)
-                </span>
+            <div className="card-header" style={{flexWrap:'wrap',gap:10}}>
+              <div style={{display:'flex',gap:6}}>
+                {[
+                  {k:'projetado',l:'📅 Projetado (Previsto)'},
+                  {k:'realizado',l:'✅ Realizado'},
+                ].map(v=>(
+                  <button key={v.k}
+                    className={`btn ${fluxoView===v.k?'btn-primary':'btn-ghost'}`}
+                    style={{fontSize:12}}
+                    onClick={()=>setFluxoView(v.k)}>{v.l}</button>
+                ))}
+              </div>
+              <span style={{fontSize:11,color:'var(--text3)'}}>
+                {fluxoView==='projetado'
+                  ? 'Títulos em aberto e vencidos (por vencimento) — alimentado por Contas a Pagar/Receber'
+                  : 'Recebimentos e pagamentos já baixados (por data de liquidação)'}
               </span>
-              <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('lancamento')}>+ Novo</button>
             </div>
+
             {loading ? (
               <div style={{textAlign:'center',padding:32,color:'var(--text3)'}}>⏳ Carregando...</div>
-            ) : lancamentos.filter(l=>!filtroTipo||l.tipo===filtroTipo).length === 0 ? (
+            ) : fluxoLista.length === 0 ? (
               <div className="empty">
-                <div style={{fontSize:36,marginBottom:8}}>📋</div>
-                <div style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>Nenhum lançamento neste período</div>
-                <button className="btn btn-primary" onClick={()=>openForm?.('lancamento')}>+ Novo Lançamento</button>
+                <div style={{fontSize:36,marginBottom:8}}>{fluxoView==='projetado'?'📅':'✅'}</div>
+                <div style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>
+                  {fluxoView==='projetado'
+                    ? 'Nenhum título previsto neste período'
+                    : 'Nenhum recebimento/pagamento realizado neste período'}
+                </div>
+                <div style={{fontSize:12,color:'var(--text3)'}}>
+                  O fluxo é alimentado automaticamente por Contas a Pagar, Contas a Receber e Lançamentos.
+                </div>
+                <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:12}}>
+                  <button className="btn btn-ghost" onClick={()=>openForm?.('conta-receber')}>+ Conta a Receber</button>
+                  <button className="btn btn-ghost" onClick={()=>openForm?.('conta-pagar')}>+ Conta a Pagar</button>
+                </div>
               </div>
             ) : (
-              <TabelaLancamentos lista={lancamentos.filter(l=>(!filtroTipo||l.tipo===filtroTipo)&&(!busca||l.descricao?.toLowerCase().includes(busca.toLowerCase())))} />
+              <div className="card-body" style={{padding:0}}>
+                {/* Resumo por data com saldo acumulado */}
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Data</th>
+                        <th style={{textAlign:'right'}}>{fluxoView==='projetado'?'Entradas Previstas':'Entradas Realizadas'}</th>
+                        <th style={{textAlign:'right'}}>{fluxoView==='projetado'?'Saídas Previstas':'Saídas Realizadas'}</th>
+                        <th style={{textAlign:'right'}}>Saldo do dia</th>
+                        <th style={{textAlign:'right'}}>Saldo acumulado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fluxoLinhas.map(r=>(
+                        <tr key={r.data}>
+                          <td style={{fontSize:12,color:'var(--text2)',fontWeight:600}}>{fmtD(r.data)}</td>
+                          <td style={{textAlign:'right',color:'var(--success)',fontWeight:600}}>{r.entradas?fmt(r.entradas):'—'}</td>
+                          <td style={{textAlign:'right',color:'var(--danger)',fontWeight:600}}>{r.saidas?fmt(r.saidas):'—'}</td>
+                          <td style={{textAlign:'right',fontWeight:700,color:r.saldoDia>=0?'var(--accent)':'var(--danger)'}}>{fmt(r.saldoDia)}</td>
+                          <td style={{textAlign:'right',fontFamily:'var(--font-head)',fontWeight:800,color:r.acumulado>=0?'var(--accent)':'var(--danger)'}}>{fmt(r.acumulado)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',borderTop:'2px solid var(--border)'}}>
+                    {[
+                      { l: fluxoView==='projetado'?'Total Previsto (Entradas)':'Total Realizado (Entradas)', v:fmt(fluxoEntradas), c:'var(--success)' },
+                      { l: fluxoView==='projetado'?'Total Previsto (Saídas)':'Total Realizado (Saídas)',     v:fmt(fluxoSaidas),   c:'var(--danger)'  },
+                      { l:'Saldo do Período', v:fmt(fluxoEntradas-fluxoSaidas), c:'var(--accent)' },
+                    ].map((t,i)=>(
+                      <div key={i} style={{padding:'10px 16px',textAlign:'center',borderRight:i<2?'1px solid var(--border)':'none'}}>
+                        <div style={{fontSize:10,color:'var(--text3)',marginBottom:2}}>{t.l}</div>
+                        <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:800,color:t.c}}>{t.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Detalhamento dos títulos */}
+                <div style={{borderTop:'1px solid var(--border)'}}>
+                  <div style={{padding:'10px 16px',fontSize:12,fontWeight:600,color:'var(--text2)'}}>
+                    Detalhamento ({fluxoLista.length} título{fluxoLista.length!==1?'s':''})
+                  </div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr><th>Descrição</th><th>Origem</th><th>{fluxoView==='projetado'?'Vencimento':'Liquidação'}</th><th>Status</th><th style={{textAlign:'right'}}>Valor</th></tr>
+                      </thead>
+                      <tbody>
+                        {fluxoLista.slice().sort((a,b)=>(a.data||'').localeCompare(b.data||'')).map(x=>(
+                          <tr key={x.id} style={{background:x.tipo==='entrada'?'rgba(0,212,160,0.02)':'rgba(255,71,87,0.02)'}}>
+                            <td style={{fontSize:13,color:'var(--text)'}}>{x.descricao}</td>
+                            <td><span className="badge badge-info" style={{fontSize:10}}>{x.origem}</span></td>
+                            <td style={{fontSize:12,color:'var(--text3)'}}>{fmtD(x.data)}</td>
+                            <td>
+                              <span className={`badge ${x.status==='Vencido'?'badge-danger':(x.status==='Recebido'||x.status==='Pago'||x.status==='Realizado')?'badge-success':'badge-warn'}`} style={{fontSize:10}}>
+                                {x.status==='Vencido'?'⚠ '+x.status:x.status}
+                              </span>
+                            </td>
+                            <td style={{textAlign:'right',fontFamily:'var(--font-head)',fontWeight:700,fontSize:14,color:x.tipo==='entrada'?'var(--success)':'var(--danger)'}}>
+                              {x.tipo==='entrada'?'+':'-'}{fmt(x.valor)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

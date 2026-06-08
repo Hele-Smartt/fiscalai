@@ -481,6 +481,60 @@ export const PlanoContas = {
   async atualizar(id, dados) { return supabase.from('plano_contas').update(dados).eq('id', id).select().single() },
 }
 
+// ── FLUXO DE CAIXA (automático: títulos + lançamentos) ────────
+// Projetado  = títulos em aberto/vencidos (por vencimento) + lançamentos pendentes
+// Realizado  = títulos baixados (por data de liquidação) + lançamentos confirmados
+export const Fluxo = {
+  async caixa(empresaId, clienteId, inicio, fim) {
+    if (!clienteId) return { projetado: [], realizado: [] }
+    const [lanc, cr, cp] = await Promise.all([
+      supabase.from('lancamentos')
+        .select('id, descricao, valor, tipo, status, data_lancamento, clientes(nome), fornecedores(nome)')
+        .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).neq('status', 'cancelado'),
+      supabase.from('contas_receber')
+        .select('id, descricao, valor, valor_recebido, status, vencimento, data_recebimento, clientes(nome)')
+        .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).neq('status', 'cancelado'),
+      supabase.from('contas_pagar')
+        .select('id, descricao, valor, valor_pago, status, vencimento, data_pagamento, fornecedores(nome)')
+        .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).neq('status', 'cancelado'),
+    ])
+    const hoje = hojeISO()
+    const projetado = []
+    const realizado = []
+
+    ;(lanc.data || []).forEach(l => {
+      const base = {
+        id: 'L' + l.id, tipo: l.tipo, valor: Number(l.valor),
+        descricao: l.descricao || (l.clientes?.nome || l.fornecedores?.nome || 'Lançamento'),
+        origem: 'Lançamento',
+      }
+      if (l.status === 'confirmado') realizado.push({ ...base, data: l.data_lancamento, status: 'Realizado' })
+      else projetado.push({ ...base, data: l.data_lancamento, status: (l.data_lancamento && l.data_lancamento < hoje) ? 'Vencido' : 'Em Aberto' })
+    })
+
+    ;(cr.data || []).forEach(c => {
+      const nome = c.descricao || c.clientes?.nome || 'Recebimento'
+      if (c.status === 'recebido') {
+        realizado.push({ id: 'R' + c.id, tipo: 'entrada', origem: 'Conta a Receber', descricao: nome, valor: Number(c.valor_recebido || c.valor), data: c.data_recebimento || c.vencimento, status: 'Recebido' })
+      } else {
+        projetado.push({ id: 'R' + c.id, tipo: 'entrada', origem: 'Conta a Receber', descricao: nome, valor: Number(c.valor), data: c.vencimento, status: (c.vencimento && c.vencimento < hoje) ? 'Vencido' : 'Em Aberto' })
+      }
+    })
+
+    ;(cp.data || []).forEach(c => {
+      const nome = c.descricao || c.fornecedores?.nome || 'Pagamento'
+      if (c.status === 'pago') {
+        realizado.push({ id: 'P' + c.id, tipo: 'saida', origem: 'Conta a Pagar', descricao: nome, valor: Number(c.valor_pago || c.valor), data: c.data_pagamento || c.vencimento, status: 'Pago' })
+      } else {
+        projetado.push({ id: 'P' + c.id, tipo: 'saida', origem: 'Conta a Pagar', descricao: nome, valor: Number(c.valor), data: c.vencimento, status: (c.vencimento && c.vencimento < hoje) ? 'Vencido' : 'Em Aberto' })
+      }
+    })
+
+    const noPeriodo = arr => arr.filter(x => x.data && x.data >= inicio && x.data <= fim)
+    return { projetado: noPeriodo(projetado), realizado: noPeriodo(realizado) }
+  },
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────
 export const Dashboard = {
   // periodo = { inicio:'YYYY-MM-DD', fim:'YYYY-MM-DD' } opcional; sem ele usa mês atual

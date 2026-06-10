@@ -284,10 +284,29 @@ export const ContasPagar = {
     return supabase.from('contas_pagar').insert(dados).select().single()
   },
 
-  async pagar(id, dataPagamento, valorPago) {
-    return supabase.from('contas_pagar')
-      .update({ status: 'pago', data_pagamento: dataPagamento, valor_pago: valorPago })
-      .eq('id', id).select().single()
+  // Baixa completa (aceita baixa parcial). baixa = {
+  //   data, valor (pago agora), juros, multa, desconto, conta_bancaria_id,
+  //   valorTotal (valor do título), valorPagoAnterior (acumulado já pago)
+  // }
+  async pagar(id, baixa) {
+    const pagoAcum = Number(baixa.valorPagoAnterior || 0) + Number(baixa.valor || 0)
+    const restante = Number(baixa.valorTotal || 0) - pagoAcum
+    const status   = restante > 0.009 ? 'parcial' : 'pago'
+    return supabase.from('contas_pagar').update({
+      status,
+      data_pagamento:    baixa.data,
+      valor_pago:        pagoAcum,
+      juros:             Number(baixa.juros || 0),
+      multa:             Number(baixa.multa || 0),
+      desconto:          Number(baixa.desconto || 0),
+      conta_bancaria_id: baixa.conta_bancaria_id || null,
+    }).eq('id', id).select().single()
+  },
+
+  async estornar(id) {
+    return supabase.from('contas_pagar').update({
+      status: 'pendente', data_pagamento: null, valor_pago: 0, juros: 0, multa: 0, desconto: 0, conta_bancaria_id: null,
+    }).eq('id', id).select().single()
   },
 
   async atualizar(id, dados) {
@@ -298,17 +317,18 @@ export const ContasPagar = {
     return supabase.from('contas_pagar').delete().eq('id', id)
   },
 
-  // "vencido" calculado: pendente + vencimento < hoje. "pendente" = a vencer (futuro/hoje).
+  // a vencer/vencido usam o SALDO restante (valor - valor_pago); inclui parciais.
   async totais(empresaId, clienteId = null) {
     if (!clienteId) return { pendente: 0, vencido: 0, pago: 0 }
-    const { data } = await supabase.from('contas_pagar').select('status, valor, vencimento')
+    const { data } = await supabase.from('contas_pagar').select('status, valor, valor_pago, vencimento')
       .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId)
     const hoje = hojeISO()
-    const pend = data?.filter(c => c.status === 'pendente') || []
+    const abertos = data?.filter(c => c.status === 'pendente' || c.status === 'parcial') || []
+    const saldo = c => Number(c.valor) - Number(c.valor_pago || 0)
     return {
-      pendente: pend.filter(c => (c.vencimento || '9999') >= hoje).reduce((s, c) => s + Number(c.valor), 0),
-      vencido:  pend.filter(c => (c.vencimento || '9999') <  hoje).reduce((s, c) => s + Number(c.valor), 0),
-      pago:     data?.filter(c => c.status === 'pago').reduce((s, c) => s + Number(c.valor), 0) || 0,
+      pendente: abertos.filter(c => (c.vencimento || '9999') >= hoje).reduce((s, c) => s + saldo(c), 0),
+      vencido:  abertos.filter(c => (c.vencimento || '9999') <  hoje).reduce((s, c) => s + saldo(c), 0),
+      pago:     data?.filter(c => c.status === 'pago' || c.status === 'parcial').reduce((s, c) => s + Number(c.valor_pago || 0), 0) || 0,
     }
   },
 }
@@ -330,10 +350,29 @@ export const ContasReceber = {
     return supabase.from('contas_receber').insert(dados).select().single()
   },
 
-  async receber(id, dataRecebimento, valorRecebido) {
-    return supabase.from('contas_receber')
-      .update({ status: 'recebido', data_recebimento: dataRecebimento, valor_recebido: valorRecebido })
-      .eq('id', id).select().single()
+  // Baixa completa (aceita baixa parcial). baixa = {
+  //   data, valor (recebido agora), juros, multa, desconto, conta_bancaria_id,
+  //   valorTotal, valorRecebidoAnterior
+  // }
+  async receber(id, baixa) {
+    const recAcum  = Number(baixa.valorRecebidoAnterior || 0) + Number(baixa.valor || 0)
+    const restante = Number(baixa.valorTotal || 0) - recAcum
+    const status   = restante > 0.009 ? 'parcial' : 'recebido'
+    return supabase.from('contas_receber').update({
+      status,
+      data_recebimento:  baixa.data,
+      valor_recebido:    recAcum,
+      juros:             Number(baixa.juros || 0),
+      multa:             Number(baixa.multa || 0),
+      desconto:          Number(baixa.desconto || 0),
+      conta_bancaria_id: baixa.conta_bancaria_id || null,
+    }).eq('id', id).select().single()
+  },
+
+  async estornar(id) {
+    return supabase.from('contas_receber').update({
+      status: 'pendente', data_recebimento: null, valor_recebido: 0, juros: 0, multa: 0, desconto: 0, conta_bancaria_id: null,
+    }).eq('id', id).select().single()
   },
 
   async atualizar(id, dados) {
@@ -344,17 +383,18 @@ export const ContasReceber = {
     return supabase.from('contas_receber').delete().eq('id', id)
   },
 
-  // "vencido" = a receber em atraso (pendente + vencimento < hoje). "pendente" = previsto a receber.
+  // a receber/em atraso usam o SALDO restante (valor - valor_recebido); inclui parciais.
   async totais(empresaId, clienteId = null) {
     if (!clienteId) return { pendente: 0, vencido: 0, recebido: 0 }
-    const { data } = await supabase.from('contas_receber').select('status, valor, vencimento')
+    const { data } = await supabase.from('contas_receber').select('status, valor, valor_recebido, vencimento')
       .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId)
     const hoje = hojeISO()
-    const pend = data?.filter(c => c.status === 'pendente') || []
+    const abertos = data?.filter(c => c.status === 'pendente' || c.status === 'parcial') || []
+    const saldo = c => Number(c.valor) - Number(c.valor_recebido || 0)
     return {
-      pendente: pend.filter(c => (c.vencimento || '9999') >= hoje).reduce((s, c) => s + Number(c.valor), 0),
-      vencido:  pend.filter(c => (c.vencimento || '9999') <  hoje).reduce((s, c) => s + Number(c.valor), 0),
-      recebido: data?.filter(c => c.status === 'recebido').reduce((s, c) => s + Number(c.valor), 0) || 0,
+      pendente: abertos.filter(c => (c.vencimento || '9999') >= hoje).reduce((s, c) => s + saldo(c), 0),
+      vencido:  abertos.filter(c => (c.vencimento || '9999') <  hoje).reduce((s, c) => s + saldo(c), 0),
+      recebido: data?.filter(c => c.status === 'recebido' || c.status === 'parcial').reduce((s, c) => s + Number(c.valor_recebido || 0), 0) || 0,
     }
   },
 }
@@ -469,6 +509,15 @@ export const FormasPagamento = {
   async atualizar(id, dados) { return supabase.from('formas_pagamento').update(dados).eq('id', id).select().single() },
 }
 
+// ── CONTAS BANCÁRIAS ──────────────────────────────────────────
+export const ContasBancarias = {
+  async listar(empresaId, clienteId = null) {
+    let q = supabase.from('contas_bancarias').select('*').eq('empresa_id', empresaId)
+    if (clienteId) q = q.eq('cliente_helevare_id', clienteId)
+    return q
+  },
+}
+
 // ── PLANO DE CONTAS ───────────────────────────────────────────
 export const PlanoContas = {
   async listar(empresaId, clienteId = null, tipo = null) {
@@ -492,10 +541,10 @@ export const Fluxo = {
         .select('id, descricao, valor, tipo, status, data_lancamento, clientes(nome), fornecedores(nome)')
         .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).neq('status', 'cancelado'),
       supabase.from('contas_receber')
-        .select('id, descricao, valor, valor_recebido, status, vencimento, data_recebimento, clientes(nome)')
+        .select('id, descricao, valor, valor_recebido, juros, multa, desconto, status, vencimento, data_recebimento, clientes(nome)')
         .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).neq('status', 'cancelado'),
       supabase.from('contas_pagar')
-        .select('id, descricao, valor, valor_pago, status, vencimento, data_pagamento, fornecedores(nome)')
+        .select('id, descricao, valor, valor_pago, juros, multa, desconto, status, vencimento, data_pagamento, fornecedores(nome)')
         .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).neq('status', 'cancelado'),
     ])
     const hoje = hojeISO()
@@ -514,19 +563,29 @@ export const Fluxo = {
 
     ;(cr.data || []).forEach(c => {
       const nome = c.descricao || c.clientes?.nome || 'Recebimento'
-      if (c.status === 'recebido') {
-        realizado.push({ id: 'R' + c.id, tipo: 'entrada', origem: 'Conta a Receber', descricao: nome, valor: Number(c.valor_recebido || c.valor), data: c.data_recebimento || c.vencimento, status: 'Recebido' })
-      } else {
-        projetado.push({ id: 'R' + c.id, tipo: 'entrada', origem: 'Conta a Receber', descricao: nome, valor: Number(c.valor), data: c.vencimento, status: (c.vencimento && c.vencimento < hoje) ? 'Vencido' : 'Em Aberto' })
+      const recebido = Number(c.valor_recebido || 0)
+      const liquido  = recebido + Number(c.juros || 0) + Number(c.multa || 0) - Number(c.desconto || 0)
+      const restante = Number(c.valor) - recebido
+      // parte já recebida -> Realizado
+      if (c.status === 'recebido' || (c.status === 'parcial' && recebido > 0)) {
+        realizado.push({ id: 'R' + c.id, tipo: 'entrada', origem: 'Conta a Receber', descricao: nome, valor: liquido, data: c.data_recebimento || c.vencimento, status: c.status === 'parcial' ? 'Parcial' : 'Recebido' })
+      }
+      // saldo restante -> Projetado
+      if (c.status === 'pendente' || (c.status === 'parcial' && restante > 0.009)) {
+        projetado.push({ id: 'R' + c.id + '-p', tipo: 'entrada', origem: 'Conta a Receber', descricao: nome + (c.status === 'parcial' ? ' (saldo)' : ''), valor: restante, data: c.vencimento, status: (c.vencimento && c.vencimento < hoje) ? 'Vencido' : 'Em Aberto' })
       }
     })
 
     ;(cp.data || []).forEach(c => {
       const nome = c.descricao || c.fornecedores?.nome || 'Pagamento'
-      if (c.status === 'pago') {
-        realizado.push({ id: 'P' + c.id, tipo: 'saida', origem: 'Conta a Pagar', descricao: nome, valor: Number(c.valor_pago || c.valor), data: c.data_pagamento || c.vencimento, status: 'Pago' })
-      } else {
-        projetado.push({ id: 'P' + c.id, tipo: 'saida', origem: 'Conta a Pagar', descricao: nome, valor: Number(c.valor), data: c.vencimento, status: (c.vencimento && c.vencimento < hoje) ? 'Vencido' : 'Em Aberto' })
+      const pago     = Number(c.valor_pago || 0)
+      const liquido  = pago + Number(c.juros || 0) + Number(c.multa || 0) - Number(c.desconto || 0)
+      const restante = Number(c.valor) - pago
+      if (c.status === 'pago' || (c.status === 'parcial' && pago > 0)) {
+        realizado.push({ id: 'P' + c.id, tipo: 'saida', origem: 'Conta a Pagar', descricao: nome, valor: liquido, data: c.data_pagamento || c.vencimento, status: c.status === 'parcial' ? 'Parcial' : 'Pago' })
+      }
+      if (c.status === 'pendente' || (c.status === 'parcial' && restante > 0.009)) {
+        projetado.push({ id: 'P' + c.id + '-p', tipo: 'saida', origem: 'Conta a Pagar', descricao: nome + (c.status === 'parcial' ? ' (saldo)' : ''), valor: restante, data: c.vencimento, status: (c.vencimento && c.vencimento < hoje) ? 'Vencido' : 'Em Aberto' })
       }
     })
 

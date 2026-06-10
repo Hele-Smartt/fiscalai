@@ -19,7 +19,7 @@ import NovoCliente from "./pages/forms/NovoCliente";
 import CategoriasFinanceiras from "./pages/CategoriasFinanceiras";
 import Login from "./pages/Login";
 import { supabase } from "./lib/supabase";
-import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Fluxo, Dashboard as DashboardDB } from "./lib/db";
+import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Fluxo, ContasBancarias, Dashboard as DashboardDB } from "./lib/db";
 
 // ─── PALETTE & TOKENS ───────────────────────────────────────────────────────
 const CSS = `
@@ -962,6 +962,10 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   const [totaisReceber, setTotaisReceber] = useState({ pendente:0, vencido:0, recebido:0 });
   const [fluxoCaixa,    setFluxoCaixa]    = useState({ projetado:[], realizado:[] });
   const [fluxoView,     setFluxoView]     = useState('projetado'); // 'projetado' | 'realizado'
+  const [bancos,        setBancos]        = useState([]);
+  const [baixa,         setBaixa]         = useState(null);   // { tipo:'pagar'|'receber', conta }
+  const [baixaForm,     setBaixaForm]     = useState({});
+  const [baixando,      setBaixando]      = useState(false);
 
   // Modal edição
   const [editando,   setEditando]   = useState(null);
@@ -1010,20 +1014,24 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
         setFluxo({ entradas, saidas, saldo: entradas - saidas });
       }
       if (tab === 2) {
-        const [res, tot] = await Promise.all([
+        const [res, tot, bcs] = await Promise.all([
           ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
           ContasPagar.totais(empresaId, clienteId),
+          ContasBancarias.listar(empresaId, clienteId),
         ]);
         setContasPagar(res.data || []);
         setTotaisPagar(tot);
+        setBancos(bcs.data || []);
       }
       if (tab === 3) {
-        const [res, tot] = await Promise.all([
+        const [res, tot, bcs] = await Promise.all([
           ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
           ContasReceber.totais(empresaId, clienteId),
+          ContasBancarias.listar(empresaId, clienteId),
         ]);
         setContasReceber(res.data || []);
         setTotaisReceber(tot);
+        setBancos(bcs.data || []);
       }
     } catch(e) { console.error(e); }
     setLoading(false);
@@ -1070,6 +1078,50 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     await Lancamentos.deletar(id);
     await carregar();
     if (showTodos) carregarTodos();
+  }
+
+  // ── Baixa de títulos (pagar / receber) ──
+  function abrirBaixa(tipo, conta) {
+    const jaPago = Number(tipo==='pagar' ? conta.valor_pago : conta.valor_recebido) || 0;
+    const restante = Number(conta.valor) - jaPago;
+    setBaixa({ tipo, conta });
+    setBaixaForm({
+      data: new Date().toISOString().slice(0,10),
+      valor: restante.toFixed(2),
+      juros: '', multa: '', desconto: '',
+      conta_bancaria_id: bancos[0]?.id || '',
+    });
+  }
+
+  async function confirmarBaixa() {
+    if (!baixa) return;
+    const f = baixaForm;
+    const c = baixa.conta;
+    const payload = {
+      data: f.data,
+      valor: parseFloat(f.valor) || 0,
+      juros: parseFloat(f.juros) || 0,
+      multa: parseFloat(f.multa) || 0,
+      desconto: parseFloat(f.desconto) || 0,
+      conta_bancaria_id: f.conta_bancaria_id || null,
+      valorTotal: Number(c.valor),
+    };
+    setBaixando(true);
+    if (baixa.tipo === 'pagar') {
+      await ContasPagar.pagar(c.id, { ...payload, valorPagoAnterior: Number(c.valor_pago||0) });
+    } else {
+      await ContasReceber.receber(c.id, { ...payload, valorRecebidoAnterior: Number(c.valor_recebido||0) });
+    }
+    setBaixando(false);
+    setBaixa(null);
+    await carregar();
+  }
+
+  async function estornar(tipo, id) {
+    if (!confirm('Estornar a baixa deste título? Ele volta para "Em Aberto".')) return;
+    if (tipo === 'pagar') await ContasPagar.estornar(id);
+    else await ContasReceber.estornar(id);
+    await carregar();
   }
 
   async function carregarTodos() {
@@ -1525,8 +1577,8 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
               <span className="card-title">Contas a Pagar</span>
               <div className="flex gap-8">
                 <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
-                  <option value="">Todos</option><option value="pendente">Pendente</option>
-                  <option value="pago">Pago</option><option value="vencido">Vencido</option>
+                  <option value="">Todos</option><option value="pendente">Em Aberto</option>
+                  <option value="parcial">Parcial</option><option value="pago">Pago</option>
                 </select>
                 <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-pagar')}>+ Nova</button>
               </div>
@@ -1548,10 +1600,14 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                         <td className="primary">{c.descricao}</td>
                         <td style={{fontSize:12,color:'var(--text2)'}}>{c.fornecedores?.nome||'—'}</td>
                         <td style={{fontSize:12,color:new Date(c.vencimento)<new Date()&&c.status==='pendente'?'var(--danger)':'var(--text3)'}}>{fmtD(c.vencimento)}</td>
-                        <td>{(()=>{const atrasado=c.status==='pendente'&&(c.vencimento||'9999')<new Date().toISOString().slice(0,10);const st=atrasado?'vencido':c.status;return <span className={`badge ${st==='pago'?'badge-success':st==='vencido'?'badge-danger':'badge-warn'}`}>{st==='vencido'?'⚠ atrasado':st}</span>;})()}</td>
-                        <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--danger)'}}>{fmt(c.valor)}</td>
-                        <td>{c.status==='pendente'&&<button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}}
-                          onClick={async()=>{await ContasPagar.pagar(c.id,new Date().toISOString().slice(0,10),c.valor);carregar();}}>✓ Pagar</button>}</td>
+                        <td>{(()=>{const aberto=c.status==='pendente'||c.status==='parcial';const atrasado=aberto&&(c.vencimento||'9999')<new Date().toISOString().slice(0,10);const cls=c.status==='pago'?'badge-success':atrasado?'badge-danger':c.status==='parcial'?'badge-info':'badge-warn';const lbl=c.status==='pago'?'Pago':c.status==='parcial'?(atrasado?'⚠ Parcial':'Parcial'):atrasado?'⚠ Atrasado':'Em Aberto';return <span className={`badge ${cls}`}>{lbl}</span>;})()}</td>
+                        <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--danger)'}}>
+                          {fmt(c.valor)}
+                          {c.status==='parcial' && <div style={{fontSize:10,color:'var(--text3)',fontWeight:400}}>pago {fmt(c.valor_pago)} · resta {fmt(Number(c.valor)-Number(c.valor_pago||0))}</div>}
+                        </td>
+                        <td>{(c.status==='pendente'||c.status==='parcial')
+                          ? <button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}} onClick={()=>abrirBaixa('pagar',c)}>✓ Baixar</button>
+                          : c.status==='pago' && <button className="btn btn-ghost" style={{fontSize:11,color:'var(--text3)'}} onClick={()=>estornar('pagar',c.id)}>↩ Estornar</button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1583,8 +1639,8 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
               <span className="card-title">Contas a Receber</span>
               <div className="flex gap-8">
                 <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
-                  <option value="">Todos</option><option value="pendente">Pendente</option>
-                  <option value="recebido">Recebido</option><option value="vencido">Vencido</option>
+                  <option value="">Todos</option><option value="pendente">Em Aberto</option>
+                  <option value="parcial">Parcial</option><option value="recebido">Recebido</option>
                 </select>
                 <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-receber')}>+ Nova</button>
               </div>
@@ -1606,10 +1662,14 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                         <td className="primary">{c.descricao}</td>
                         <td style={{fontSize:12,color:'var(--text2)'}}>{c.clientes?.nome||'—'}</td>
                         <td style={{fontSize:12,color:new Date(c.vencimento)<new Date()&&c.status==='pendente'?'var(--danger)':'var(--text3)'}}>{fmtD(c.vencimento)}</td>
-                        <td>{(()=>{const atrasado=c.status==='pendente'&&(c.vencimento||'9999')<new Date().toISOString().slice(0,10);const st=atrasado?'vencido':c.status;return <span className={`badge ${st==='recebido'?'badge-success':st==='vencido'?'badge-danger':'badge-warn'}`}>{st==='vencido'?'⚠ em atraso':st}</span>;})()}</td>
-                        <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--success)'}}>{fmt(c.valor)}</td>
-                        <td>{c.status==='pendente'&&<button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}}
-                          onClick={async()=>{await ContasReceber.receber(c.id,new Date().toISOString().slice(0,10),c.valor);carregar();}}>✓ Receber</button>}</td>
+                        <td>{(()=>{const aberto=c.status==='pendente'||c.status==='parcial';const atrasado=aberto&&(c.vencimento||'9999')<new Date().toISOString().slice(0,10);const cls=c.status==='recebido'?'badge-success':atrasado?'badge-danger':c.status==='parcial'?'badge-info':'badge-warn';const lbl=c.status==='recebido'?'Recebido':c.status==='parcial'?(atrasado?'⚠ Parcial':'Parcial'):atrasado?'⚠ Em atraso':'Em Aberto';return <span className={`badge ${cls}`}>{lbl}</span>;})()}</td>
+                        <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:'var(--success)'}}>
+                          {fmt(c.valor)}
+                          {c.status==='parcial' && <div style={{fontSize:10,color:'var(--text3)',fontWeight:400}}>recebido {fmt(c.valor_recebido)} · resta {fmt(Number(c.valor)-Number(c.valor_recebido||0))}</div>}
+                        </td>
+                        <td>{(c.status==='pendente'||c.status==='parcial')
+                          ? <button className="btn btn-ghost" style={{fontSize:11,color:'var(--success)'}} onClick={()=>abrirBaixa('receber',c)}>✓ Baixar</button>
+                          : c.status==='recebido' && <button className="btn btn-ghost" style={{fontSize:11,color:'var(--text3)'}} onClick={()=>estornar('receber',c.id)}>↩ Estornar</button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1673,6 +1733,73 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
           </div>
         </div>
       )}
+
+      {/* MODAL BAIXA DE TÍTULO */}
+      {baixa && (()=>{
+        const c = baixa.conta;
+        const isPagar = baixa.tipo==='pagar';
+        const jaBaixado = Number(isPagar?c.valor_pago:c.valor_recebido)||0;
+        const restante = Number(c.valor)-jaBaixado;
+        const vAbater = parseFloat(baixaForm.valor)||0;
+        const liquido = vAbater + (parseFloat(baixaForm.juros)||0) + (parseFloat(baixaForm.multa)||0) - (parseFloat(baixaForm.desconto)||0);
+        const parcial = vAbater>0 && vAbater < restante-0.009;
+        return (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:20}}
+          onClick={e=>e.target===e.currentTarget&&setBaixa(null)}>
+          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,padding:32,width:'100%',maxWidth:460}}>
+            <div style={{fontFamily:'var(--font-head)',fontSize:17,fontWeight:800,marginBottom:4}}>
+              {isPagar?'💸 Baixar Conta a Pagar':'💰 Baixar Conta a Receber'}
+            </div>
+            <div style={{fontSize:13,color:'var(--text2)',marginBottom:16}}>{c.descricao} · total {fmt(c.valor)}{jaBaixado>0&&` · já ${isPagar?'pago':'recebido'} ${fmt(jaBaixado)}`} · resta <strong style={{color:'var(--text)'}}>{fmt(restante)}</strong></div>
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div style={{display:'flex',gap:10}}>
+                <div style={{flex:1}}>
+                  <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Data {isPagar?'do pagamento':'do recebimento'}</label>
+                  <input className="inp" type="date" value={baixaForm.data} onChange={e=>setBaixaForm(f=>({...f,data:e.target.value}))} />
+                </div>
+                <div style={{flex:1}}>
+                  <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Valor a {isPagar?'pagar':'receber'} (R$)</label>
+                  <input className="inp" type="number" step="0.01" value={baixaForm.valor} onChange={e=>setBaixaForm(f=>({...f,valor:e.target.value}))} />
+                </div>
+              </div>
+              <div>
+                <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Conta bancária</label>
+                <select className="inp" value={baixaForm.conta_bancaria_id} onChange={e=>setBaixaForm(f=>({...f,conta_bancaria_id:e.target.value}))}>
+                  <option value="">— Selecione —</option>
+                  {bancos.map(b=>(<option key={b.id} value={b.id}>{b.nome||b.banco||b.apelido||b.descricao||'Conta'}</option>))}
+                </select>
+                {bancos.length===0 && <div style={{fontSize:11,color:'var(--warn)',marginTop:4}}>Nenhuma conta bancária cadastrada (Gestão Bancária).</div>}
+              </div>
+              <div style={{display:'flex',gap:10}}>
+                {[
+                  {k:'juros',l:'Juros (R$)'},
+                  {k:'multa',l:'Multa (R$)'},
+                  {k:'desconto',l:'Desconto (R$)'},
+                ].map(f=>(
+                  <div key={f.k} style={{flex:1}}>
+                    <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>{f.l}</label>
+                    <input className="inp" type="number" step="0.01" placeholder="0,00" value={baixaForm[f.k]} onChange={e=>setBaixaForm(bf=>({...bf,[f.k]:e.target.value}))} />
+                  </div>
+                ))}
+              </div>
+              <div style={{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:12,color:'var(--text2)'}}>{isPagar?'Saída líquida no banco':'Entrada líquida no banco'}</span>
+                <span style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:17,color:isPagar?'var(--danger)':'var(--success)'}}>{fmt(liquido)}</span>
+              </div>
+              {parcial && <div style={{fontSize:12,color:'var(--accent2)',background:'rgba(0,144,255,0.08)',borderRadius:8,padding:'8px 12px'}}>ℹ️ Baixa parcial — restará {fmt(restante-vAbater)}. O título fica como <strong>Parcial</strong>.</div>}
+              <div style={{display:'flex',gap:10,marginTop:4}}>
+                <button style={{flex:1,padding:11,borderRadius:'var(--radius)',background:'transparent',color:'var(--text2)',border:'1px solid var(--border2)',cursor:'pointer'}}
+                  onClick={()=>setBaixa(null)}>Cancelar</button>
+                <button style={{flex:2,padding:11,borderRadius:'var(--radius)',background:'var(--accent)',color:'var(--bg)',border:'none',cursor:'pointer',fontFamily:'var(--font-head)',fontWeight:700,opacity:(vAbater<=0||baixando)?0.5:1}}
+                  onClick={confirmarBaixa} disabled={vAbater<=0||baixando}>
+                  {baixando?'⏳ Processando...':parcial?'✅ Confirmar baixa parcial':'✅ Confirmar baixa'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* MODAL TODOS OS LANÇAMENTOS */}
       {showTodos && (

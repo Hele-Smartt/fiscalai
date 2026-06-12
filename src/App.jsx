@@ -1995,214 +1995,316 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     </div>
   );
 }
-function Tributario() {
+function Tributario({ empresaId, clienteId }) {
+  const { clienteAtivo } = useCliente();
+  const regimeAtual = clienteAtivo?.regime || '—';
+  const [sub,    setSub]    = useState('comparador');
+  const [ano,    setAno]    = useState(new Date().getFullYear());
+  const [trib,   setTrib]   = useState({});
+  const [loading,setLoading]= useState(true);
+  const [receitaMensal, setReceitaMensal] = useState(50000);
+  const [margemReal,    setMargemReal]    = useState(20);
+  const [issAliq,       setIssAliq]       = useState(3);
+
+  useEffect(()=>{ if(empresaId&&clienteId) carregar(); }, [empresaId, clienteId, ano]);
+  async function carregar() {
+    setLoading(true);
+    try {
+      const t = await NotasFiscais.totaisTributarios(empresaId, ano, clienteId);
+      setTrib(t||{});
+      const r = await Lancamentos.resumoPeriodo(empresaId, `${ano}-01-01`, `${ano}-12-31`, clienteId);
+      if (r.entradas>0) setReceitaMensal(Math.round(r.entradas/12));
+    } catch(e){ console.error(e); }
+    setLoading(false);
+  }
+
+  const tribItens = [
+    { k:'icms',  l:'ICMS',  c:'var(--danger)' },
+    { k:'pis',   l:'PIS',   c:'var(--accent2)' },
+    { k:'cofins',l:'COFINS',c:'var(--accent)' },
+    { k:'iss',   l:'ISS',   c:'var(--accent4)' },
+    { k:'ipi',   l:'IPI',   c:'var(--warn)' },
+    { k:'inss',  l:'INSS',  c:'#A855F7' },
+  ];
+  const totalTrib = tribItens.reduce((s,t)=>s+(Number(trib[t.k])||0),0);
+
+  // ── Comparador (estimativa simplificada p/ serviços) ──
+  function efetivaSimples(rbt12) {
+    const faixas = [
+      {ate:180000,aliq:0.06,ded:0},{ate:360000,aliq:0.112,ded:9360},
+      {ate:720000,aliq:0.135,ded:17640},{ate:1800000,aliq:0.16,ded:35640},
+      {ate:3600000,aliq:0.21,ded:125640},{ate:4800000,aliq:0.33,ded:648000},
+    ];
+    const f = faixas.find(x=>rbt12<=x.ate) || faixas[faixas.length-1];
+    return rbt12>0 ? Math.max((rbt12*f.aliq - f.ded)/rbt12, 0) : f.aliq;
+  }
+  const receitaAnual = receitaMensal*12;
+  const efSN = efetivaSimples(receitaAnual);
+  const snMes = receitaMensal*efSN;
+  const lucroPres = receitaMensal*0.32;
+  const lpMes = lucroPres*0.15 + Math.max(0,lucroPres-20000)*0.10 + lucroPres*0.09 + receitaMensal*0.0065 + receitaMensal*0.03 + receitaMensal*(issAliq/100);
+  const lucroReal = receitaMensal*(margemReal/100);
+  const lrMes = lucroReal*0.15 + Math.max(0,lucroReal-20000)*0.10 + lucroReal*0.09 + receitaMensal*0.0165 + receitaMensal*0.076 + receitaMensal*(issAliq/100);
+  const regimes = [
+    { nome:'Simples Nacional', mes:snMes, ef:efSN, itens:['Anexo III (serviços)','DAS unificado','Limite R$ 4,8M/ano'] },
+    { nome:'Lucro Presumido', mes:lpMes, ef:receitaMensal?lpMes/receitaMensal:0, itens:['Presunção 32%','IRPJ 15% + adicional','PIS/COFINS 0,65%+3%',`ISS ${issAliq}%`] },
+    { nome:'Lucro Real', mes:lrMes, ef:receitaMensal?lrMes/receitaMensal:0, itens:[`Lucro real ${margemReal}%`,'PIS/COFINS 1,65%+7,6%','IRPJ/CSLL sobre lucro',`ISS ${issAliq}%`] },
+  ];
+  const melhor = regimes.reduce((a,b)=>a.mes<b.mes?a:b);
+  const pct = v => `${(v*100).toFixed(1)}%`;
+
   return (
     <div className="fade-up">
       <div className="section-header mb-20">
         <div>
           <div className="section-title">Inteligência Tributária</div>
-          <div className="section-sub">Simulação e comparação de regimes — análise automatizada por IA</div>
+          <div className="section-sub">
+            <strong style={{color:'var(--accent)'}}>{clienteAtivo?.nome||'—'}</strong>
+            {' · regime atual: '}<strong style={{color:'var(--text)'}}>{regimeAtual}</strong>
+          </div>
         </div>
         <div className="flex gap-8">
-          <button className="btn btn-ghost">📋 Parecer Técnico</button>
-          <button className="btn btn-primary">🔄 Recalcular</button>
+          <button className="btn btn-ghost" onClick={carregar}>🔄 Atualizar</button>
         </div>
       </div>
 
-      <div className="alert alert-success mb-16">
-        <span className="alert-icon">🤖</span>
-        <div className="alert-content">
-          <div className="alert-title">IA identificou oportunidade tributária</div>
-          <div className="alert-desc">Com base na análise das 847 NFs e no cruzamento com dados do Portal da Transparência Tributária, o Lucro Presumido é o regime mais vantajoso, gerando economia de <strong>R$ 84.000/ano</strong> vs. regime atual.</div>
-        </div>
+      <div className="tabs mb-16">
+        <div className={`tab ${sub==='comparador'?'active':''}`} onClick={()=>setSub('comparador')}>⚖️ Comparador de Regimes</div>
+        <div className={`tab ${sub==='composicao'?'active':''}`} onClick={()=>setSub('composicao')}>🧾 Composição Real (NF-e)</div>
       </div>
 
-      <div className="regime-grid mb-20">
-        {[
-          {
-            name: "Simples Nacional", tax: "16,2%", val: 1474200, best: false, color: "var(--accent4)",
-            items: ["Alíquota progressiva por faixa", "Unifica 8 tributos em 1 guia", "Limite: R$ 4,8M/ano", "IRPJ incluso no DAS"],
-          },
-          {
-            name: "Lucro Presumido", tax: "12,8%", val: 1164800, best: true, color: "var(--success)",
-            items: ["Presunção de 32% de lucro", "IRPJ: 15% + adicional 10%", "PIS/COFINS: 0,65% + 3%", "Ideal: margem real > presumida"],
-          },
-          {
-            name: "Lucro Real", tax: "14,1%", val: 1283100, best: false, color: "var(--accent2)",
-            items: ["Base no lucro efetivo", "Créditos de PIS/COFINS", "Complexidade contábil alta", "Indicado para margens baixas"],
-          },
-        ].map((r, i) => (
-          <div key={i} className={`regime-card ${r.best ? "best" : ""}`}>
-            <div className="regime-name">{r.name}</div>
-            <div style={{ fontSize: 12, color: "var(--text3)" }}>Carga efetiva estimada</div>
-            <div className={`regime-tax ${r.best ? "best-val" : ""}`} style={{ color: r.best ? "var(--success)" : "var(--text2)" }}>{r.tax}</div>
-            <div style={{ fontSize: 14, color: "var(--text)", fontWeight: 600, marginBottom: 4 }}>{fmt(r.val)}<span style={{ fontSize: 11, color: "var(--text3)" }}>/ano</span></div>
-            {r.best && <div style={{ fontSize: 11, color: "var(--success)", marginBottom: 8 }}>✓ Economia de {fmt(1474200 - r.val)}/ano</div>}
-            <ul className="regime-items">
-              {r.items.map((item, j) => <li key={j} className="regime-item">{item}</li>)}
-            </ul>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid-12">
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">Composição Tributária Atual</span>
-            <span className="badge badge-danger">Acima do mercado +4,3pp</span>
-          </div>
-          <div className="card-body">
-            {[
-              { name: "IRPJ + CSLL",  val: 421000, pct: 24.9, c: "var(--accent2)" },
-              { name: "PIS + COFINS", val: 512000, pct: 30.3, c: "var(--accent)" },
-              { name: "ISS",          val: 91000,  pct: 5.4, c: "var(--accent4)" },
-              { name: "INSS Patronal",val: 284000, pct: 16.8, c: "var(--warn)" },
-              { name: "ICMS",         val: 148000, pct: 8.8, c: "var(--danger)" },
-              { name: "Outros",       val: 235000, pct: 13.9, c: "var(--text3)" },
-            ].map((t, i) => (
-              <div key={i} className="mb-12">
-                <div className="flex justify-between mb-4">
-                  <span className="text-sm">{t.name}</span>
-                  <span className="text-sm font-bold">{fmt(t.val)} <span className="text-muted">({t.pct}%)</span></span>
-                </div>
-                <div className="progress">
-                  <div className="progress-fill" style={{ width: `${t.pct * 3}%`, background: t.c }} />
-                </div>
+      {sub==='comparador' && (
+        <>
+          <div className="card mb-16">
+            <div className="card-body" style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
+              <div style={{flex:1,minWidth:220}}>
+                <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>Receita mensal: <strong style={{color:'var(--text)'}}>{fmt(receitaMensal)}</strong> <span style={{color:'var(--text3)'}}>({fmt(receitaAnual)}/ano)</span></div>
+                <input type="range" min={5000} max={400000} step={1000} value={receitaMensal} onChange={e=>setReceitaMensal(+e.target.value)} style={{width:'100%',accentColor:'var(--accent)'}} />
               </div>
-            ))}
-            <div className="divider" />
-            <div className="flex justify-between">
-              <span style={{ fontWeight: 700 }}>Total Anual</span>
-              <span style={{ fontWeight: 800, color: "var(--danger)", fontFamily: "var(--font-head)" }}>R$ 1.691.000</span>
+              <div style={{width:200}}>
+                <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>Margem de lucro real: <strong style={{color:'var(--text)'}}>{margemReal}%</strong></div>
+                <input type="range" min={1} max={60} step={1} value={margemReal} onChange={e=>setMargemReal(+e.target.value)} style={{width:'100%',accentColor:'var(--accent)'}} />
+              </div>
+              <div style={{width:140}}>
+                <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>ISS: <strong style={{color:'var(--text)'}}>{issAliq}%</strong></div>
+                <input type="range" min={2} max={5} step={0.5} value={issAliq} onChange={e=>setIssAliq(+e.target.value)} style={{width:'100%',accentColor:'var(--accent)'}} />
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="card">
-          <div className="card-header"><span className="card-title">Compliance Tributário</span></div>
-          <div className="card-body">
-            {[
-              { label: "SPED Contábil — Entregue", status: "ok" },
-              { label: "EFD-REINF — Em dia", status: "ok" },
-              { label: "DCTF — Entregue", status: "ok" },
-              { label: "DIRF — Entregue", status: "ok" },
-              { label: "ECF — Entregue", status: "ok" },
-              { label: "GIA Estadual — Pendente revisão", status: "warn" },
-              { label: "DARF — 3 guias a vencer", status: "warn" },
-              { label: "Parcelamento PGFN — Verificar", status: "warn" },
-            ].map((c, i) => (
-              <div key={i} className="compliance-item">
-                <div className={`compliance-status ${c.status === "ok" ? "c-ok" : c.status === "warn" ? "c-warn" : "c-err"}`}>
-                  {c.status === "ok" ? "✓" : c.status === "warn" ? "!" : "✗"}
+          <div className="regime-grid mb-16">
+            {regimes.map((r,i)=>{
+              const atual = r.nome===regimeAtual;
+              const best = r.nome===melhor.nome;
+              return (
+                <div key={i} className={`regime-card ${best?'best':''}`} style={atual?{outline:'2px solid var(--accent2)'}:{}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div className="regime-name">{r.nome}</div>
+                    {atual && <span className="badge badge-info" style={{fontSize:10}}>Atual</span>}
+                  </div>
+                  <div style={{fontSize:12,color:'var(--text3)'}}>Carga efetiva estimada</div>
+                  <div className={`regime-tax ${best?'best-val':''}`} style={{color:best?'var(--success)':'var(--text2)'}}>{pct(r.ef)}</div>
+                  <div style={{fontSize:14,color:'var(--text)',fontWeight:600}}>{fmt(r.mes)}<span style={{fontSize:11,color:'var(--text3)'}}>/mês</span></div>
+                  <div style={{fontSize:12,color:'var(--text3)',marginBottom:6}}>{fmt(r.mes*12)}/ano</div>
+                  {best && <div style={{fontSize:11,color:'var(--success)',marginBottom:6}}>✓ Mais econômico</div>}
+                  {!best && <div style={{fontSize:11,color:'var(--danger)',marginBottom:6}}>+{fmt((r.mes-melhor.mes)*12)}/ano vs melhor</div>}
+                  <ul className="regime-items">{r.itens.map((it,j)=><li key={j} className="regime-item">• {it}</li>)}</ul>
                 </div>
-                <span style={{ fontSize: 13, color: c.status === "ok" ? "var(--text2)" : "var(--text)" }}>{c.label}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
-      </div>
+
+          {regimeAtual!=='—' && melhor.nome!==regimeAtual && (
+            <div className="alert alert-success mb-16">
+              <span className="alert-icon">💡</span>
+              <div className="alert-content">
+                <div className="alert-title">Possível economia mudando de regime</div>
+                <div className="alert-desc">Na simulação, o <strong>{melhor.nome}</strong> sai {fmt((regimes.find(r=>r.nome===regimeAtual).mes - melhor.mes)*12)}/ano mais barato que o regime atual ({regimeAtual}). Estimativa simplificada para serviços — confirme com a contabilidade.</div>
+              </div>
+            </div>
+          )}
+          <div style={{fontSize:11,color:'var(--text3)'}}>Estimativa simplificada para prestação de serviços (Anexo III / presunção 32%). Não considera substituição tributária, créditos específicos nem benefícios setoriais. Use como orientação, não como cálculo fiscal definitivo.</div>
+        </>
+      )}
+
+      {sub==='composicao' && (
+        <>
+          <div className="flex gap-8 mb-16" style={{alignItems:'center'}}>
+            <span style={{fontSize:12,color:'var(--text2)'}}>Ano:</span>
+            {[0,1,2].map(off=>{const y=new Date().getFullYear()-off;return (
+              <button key={y} className={`btn ${ano===y?'btn-primary':'btn-ghost'}`} style={{fontSize:12,padding:'5px 12px'}} onClick={()=>setAno(y)}>{y}</button>
+            );})}
+          </div>
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Composição Tributária — {ano} (notas autorizadas)</span>
+              <span className="badge badge-info">{fmt(totalTrib)} total</span>
+            </div>
+            <div className="card-body">
+              {loading ? <div style={{textAlign:'center',padding:24,color:'var(--text3)'}}>⏳ Carregando...</div> :
+               totalTrib===0 ? (
+                <div className="empty">
+                  <div style={{fontSize:32,marginBottom:8}}>🧾</div>
+                  <div style={{color:'var(--text2)'}}>Nenhum imposto registrado em notas neste ano</div>
+                  <div style={{fontSize:12,color:'var(--text3)'}}>A composição é alimentada pelas NF-e importadas (Importar NF-e).</div>
+                </div>
+              ) : (
+                <>
+                  {tribItens.filter(t=>Number(trib[t.k])>0).map(t=>{
+                    const v=Number(trib[t.k])||0; const p=totalTrib?v/totalTrib*100:0;
+                    return (
+                      <div key={t.k} className="mb-12">
+                        <div className="flex justify-between mb-4">
+                          <span className="text-sm">{t.l}</span>
+                          <span className="text-sm font-bold">{fmt(v)} <span className="text-muted">({p.toFixed(1)}%)</span></span>
+                        </div>
+                        <div className="progress"><div className="progress-fill" style={{width:`${p}%`,background:t.c}} /></div>
+                      </div>
+                    );
+                  })}
+                  <div className="divider" />
+                  <div className="flex justify-between">
+                    <span style={{fontWeight:700}}>Total {ano}</span>
+                    <span style={{fontWeight:800,color:'var(--danger)',fontFamily:'var(--font-head)'}}>{fmt(totalTrib)}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function Creditos() {
-  const total = credits.reduce((s, c) => s + c.value, 0);
+function Creditos({ empresaId, clienteId }) {
+  const [ano,     setAno]     = useState(new Date().getFullYear());
+  const [iva,     setIva]     = useState({ entrada:{icms:0,pis:0,cofins:0,iss:0,ipi:0,inss:0,valor_total:0,qtd:0}, saida:{icms:0,pis:0,cofins:0,iss:0,ipi:0,inss:0,valor_total:0,qtd:0} });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{ if(empresaId&&clienteId) carregar(); }, [empresaId, clienteId, ano]);
+  async function carregar() {
+    setLoading(true);
+    try { setIva(await NotasFiscais.creditosIVA(empresaId, ano, clienteId)); }
+    catch(e){ console.error(e); }
+    setLoading(false);
+  }
+
+  const tribs = [
+    { k:'icms',  l:'ICMS',  c:'#FF4757' },
+    { k:'pis',   l:'PIS',   c:'#0090FF' },
+    { k:'cofins',l:'COFINS',c:'#00D4A0' },
+    { k:'iss',   l:'ISS',   c:'#FFB800' },
+    { k:'ipi',   l:'IPI',   c:'#FF6B35' },
+    { k:'inss',  l:'INSS',  c:'#A855F7' },
+  ];
+  const credTotal = tribs.reduce((s,t)=>s+iva.entrada[t.k],0);
+  const debTotal  = tribs.reduce((s,t)=>s+iva.saida[t.k],0);
+  const saldo     = credTotal - debTotal;
+
   return (
     <div className="fade-up">
       <div className="section-header mb-20">
         <div>
-          <div className="section-title">Recuperação de Créditos Fiscais</div>
-          <div className="section-sub">Mapeamento automático de oportunidades — atualizado com jurisprudência do STF/STJ</div>
+          <div className="section-title">Créditos IVA</div>
+          <div className="section-sub">Créditos de entrada (insumos) × débitos de saída (vendas) — a partir das NF-e</div>
         </div>
-        <div className="flex gap-8">
-          <button className="btn btn-ghost">📋 Gerar Parecer</button>
-          <button className="btn btn-primary">⚡ Iniciar Recuperação</button>
+        <div className="flex gap-8" style={{alignItems:'center'}}>
+          {[0,1,2].map(off=>{const y=new Date().getFullYear()-off;return (
+            <button key={y} className={`btn ${ano===y?'btn-primary':'btn-ghost'}`} style={{fontSize:12,padding:'5px 12px'}} onClick={()=>setAno(y)}>{y}</button>
+          );})}
+          <button className="btn btn-ghost" onClick={carregar}>🔄</button>
         </div>
       </div>
 
       <div className="kpi-row mb-20">
         {[
-          { icon: "💎", label: "Total Recuperável", val: fmtK(total), color: "#00D4A0", bg: "rgba(0,212,160,0.1)" },
-          { icon: "📊", label: "Oportunidades", val: "5 ativas", color: "#0090FF", bg: "rgba(0,144,255,0.1)" },
-          { icon: "⚖️", label: "Maior Probabilidade", val: "95%", color: "#A855F7", bg: "rgba(168,85,247,0.1)" },
-          { icon: "⏱️", label: "Prazo Médio", val: "8-18 meses", color: "#FFB800", bg: "rgba(255,184,0,0.1)" },
-        ].map((k, i) => (
+          { icon:"📥", label:"Créditos (entradas)", val:fmtK(credTotal), color:"#00D4A0", bg:"rgba(0,212,160,0.1)" },
+          { icon:"📤", label:"Débitos (saídas)",    val:fmtK(debTotal),  color:"#FF4757", bg:"rgba(255,71,87,0.1)" },
+          { icon:"⚖️", label:saldo>=0?"Saldo credor":"Saldo devedor", val:fmtK(Math.abs(saldo)), color:saldo>=0?"#00D4A0":"#FF6B35", bg:saldo>=0?"rgba(0,212,160,0.1)":"rgba(255,107,53,0.1)" },
+          { icon:"🧾", label:"Notas no ano", val:`${iva.entrada.qtd+iva.saida.qtd}`, color:"#0090FF", bg:"rgba(0,144,255,0.1)" },
+        ].map((k,i)=>(
           <div key={i} className="kpi-item">
-            <div className="kpi-icon-box" style={{ background: k.bg }}><span>{k.icon}</span></div>
+            <div className="kpi-icon-box" style={{background:k.bg}}><span>{k.icon}</span></div>
             <div className="kpi-data">
-              <div className="kpi-val" style={{ color: k.color }}>{k.val}</div>
+              <div className="kpi-val" style={{color:k.color}}>{k.val}</div>
               <div className="kpi-lbl">{k.label}</div>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="grid-12">
-        <div>
-          <div className="credit-grid">
-            {credits.map((c, i) => (
-              <div key={i} className="credit-item">
-                <div className="credit-icon" style={{ background: `${c.color}18` }}>
-                  <span>{c.icon}</span>
-                </div>
-                <div className="credit-info">
-                  <div className="credit-title">{c.title}</div>
-                  <div className="credit-desc">{c.desc}</div>
-                  <div style={{ marginTop: 6 }}>
-                    <div className="progress" style={{ width: 160 }}>
-                      <div className="progress-fill" style={{ width: `${c.prob}%`, background: c.color }} />
-                    </div>
-                  </div>
-                </div>
-                <div className="credit-amount">
-                  <div className="credit-value">{fmtK(c.value)}</div>
-                  <div className="credit-prob">{c.prob}% de êxito</div>
-                  <button className="btn btn-ghost" style={{ fontSize: 10, padding: "3px 8px", marginTop: 6 }}>Detalhar</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex-col gap-16">
+      {loading ? (
+        <div className="card"><div className="card-body" style={{textAlign:'center',padding:32,color:'var(--text3)'}}>⏳ Carregando...</div></div>
+      ) : (credTotal===0 && debTotal===0) ? (
+        <div className="card"><div className="card-body empty" style={{padding:40}}>
+          <div style={{fontSize:36,marginBottom:8}}>💎</div>
+          <div style={{color:'var(--text2)',marginBottom:4}}>Nenhuma nota com impostos em {ano}</div>
+          <div style={{fontSize:12,color:'var(--text3)'}}>Os créditos vêm das NF-e de entrada (compras/insumos) e os débitos das NF-e de saída (vendas). Importe notas em "Importar NF-e".</div>
+        </div></div>
+      ) : (
+        <div className="grid-12">
           <div className="card">
-            <div className="card-header"><span className="card-title">Distribuição do Potencial</span></div>
+            <div className="card-header"><span className="card-title">Crédito × Débito por tributo</span></div>
             <div className="card-body">
-              <div className="donut-container">
-                <DonutChart segments={credits.map(c => ({ color: c.color, val: c.value }))} size={120} />
-                <div className="donut-legend">
-                  {credits.map((c, i) => (
-                    <div key={i} className="legend-item">
-                      <div className="legend-dot" style={{ background: c.color }} />
-                      <span className="legend-label" style={{ fontSize: 11 }}>{c.title.split(" ").slice(0, 3).join(" ")}</span>
-                      <span className="legend-value">{fmtK(c.value)}</span>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Tributo</th><th style={{textAlign:'right'}}>Crédito (entrada)</th><th style={{textAlign:'right'}}>Débito (saída)</th><th style={{textAlign:'right'}}>Saldo</th></tr></thead>
+                  <tbody>
+                    {tribs.map(t=>{
+                      const cr=iva.entrada[t.k], db=iva.saida[t.k], sl=cr-db;
+                      if(cr===0&&db===0) return null;
+                      return (
+                        <tr key={t.k}>
+                          <td><span style={{display:'inline-flex',alignItems:'center',gap:6}}><span style={{width:8,height:8,borderRadius:2,background:t.c}}/>{t.l}</span></td>
+                          <td style={{textAlign:'right',color:'var(--success)'}}>{fmt(cr)}</td>
+                          <td style={{textAlign:'right',color:'var(--danger)'}}>{fmt(db)}</td>
+                          <td style={{textAlign:'right',fontWeight:700,color:sl>=0?'var(--accent)':'var(--warn)'}}>{fmt(sl)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',borderTop:'2px solid var(--border)'}}>
+                  {[
+                    {l:'Total Créditos',v:fmt(credTotal),c:'var(--success)'},
+                    {l:'Total Débitos', v:fmt(debTotal), c:'var(--danger)'},
+                    {l:saldo>=0?'Saldo Credor':'Saldo Devedor', v:fmt(Math.abs(saldo)), c:saldo>=0?'var(--accent)':'var(--warn)'},
+                  ].map((x,i)=>(
+                    <div key={i} style={{padding:'10px 16px',textAlign:'center',borderRight:i<2?'1px solid var(--border)':'none'}}>
+                      <div style={{fontSize:10,color:'var(--text3)',marginBottom:2}}>{x.l}</div>
+                      <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:800,color:x.c}}>{x.v}</div>
                     </div>
                   ))}
                 </div>
               </div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:12}}>
+                Saldo credor = você pagou mais imposto nas compras do que deve nas vendas (recuperável/compensável). Com a Reforma (CBS/IBS), o modelo de crédito amplo de entrada tende a aumentar o aproveitamento desses valores.
+              </div>
             </div>
           </div>
+
           <div className="card">
-            <div className="card-header"><span className="card-title">Teses Aplicáveis</span></div>
+            <div className="card-header"><span className="card-title">Créditos por tributo</span></div>
             <div className="card-body">
-              {[
-                { tese: "RE 574.706 — STF", desc: "Exclusão ICMS PIS/COFINS", status: "Transitado em Julgado" },
-                { tese: "STJ Tema 1170", desc: "INSS verbas indenizatórias", status: "Repetitivo" },
-                { tese: "ADC 49 — STF", desc: "ICMS-ST transferência", status: "Ativo" },
-                { tese: "REsp 1.221.170", desc: "Insumos PIS/COFINS", status: "Transitado" },
-              ].map((t, i) => (
-                <div key={i} style={{ padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
-                  <div className="flex justify-between mb-4">
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>{t.tese}</span>
-                    <span className="badge badge-success" style={{ fontSize: 10 }}>{t.status}</span>
+              {credTotal>0 ? (
+                <div className="donut-container">
+                  <DonutChart segments={tribs.filter(t=>iva.entrada[t.k]>0).map(t=>({color:t.c,val:iva.entrada[t.k]}))} size={120} />
+                  <div className="donut-legend">
+                    {tribs.filter(t=>iva.entrada[t.k]>0).map(t=>(
+                      <div key={t.k} className="legend-item">
+                        <div className="legend-dot" style={{background:t.c}} />
+                        <span className="legend-label" style={{fontSize:11}}>{t.l}</span>
+                        <span className="legend-value">{fmtK(iva.entrada[t.k])}</span>
+                      </div>
+                    ))}
                   </div>
-                  <span style={{ fontSize: 12, color: "var(--text3)" }}>{t.desc}</span>
                 </div>
-              ))}
+              ) : <div style={{textAlign:'center',padding:24,color:'var(--text3)',fontSize:13}}>Sem créditos de entrada em {ano}.</div>}
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

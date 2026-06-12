@@ -997,7 +997,11 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   const [totaisPagar,   setTotaisPagar]   = useState({ pendente:0, vencido:0, pago:0 });
   const [totaisReceber, setTotaisReceber] = useState({ pendente:0, vencido:0, recebido:0 });
   const [fluxoCaixa,    setFluxoCaixa]    = useState({ projetado:[], realizado:[] });
-  const [fluxoView,     setFluxoView]     = useState('projetado'); // 'projetado' | 'realizado'
+  const [fluxoView,     setFluxoView]     = useState('projetado'); // 'projetado' | 'realizado' | 'preditivo'
+  const [preditivoBase, setPreditivoBase] = useState({ mediaEntradas:0, mediaSaidas:0, titulosPorMes:{} });
+  const [cenario,       setCenario]       = useState('realista');
+  const [saldoInicial,  setSaldoInicial]  = useState(0);
+  const [horizonte,     setHorizonte]     = useState(6);
   const [bancos,        setBancos]        = useState([]);
   const [baixa,         setBaixa]         = useState(null);   // { tipo:'pagar'|'receber', conta }
   const [baixaForm,     setBaixaForm]     = useState({});
@@ -1030,6 +1034,9 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
         // Evolução 12 meses (independente do filtro de período)
         const ev = await Lancamentos.evolucao12Meses(empresaId, clienteId);
         setEvolucao(ev);
+        // Base do preditivo (média histórica + títulos futuros)
+        const pb = await Fluxo.preditivoBase(empresaId, clienteId);
+        setPreditivoBase(pb);
       }
       if (tab === 1) {
         // DRE: lançamentos do período selecionado
@@ -1217,6 +1224,35 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     return { data:d, entradas:e, saidas:s, saldoDia:e-s, acumulado:acumFluxo };
   });
 
+  // ── Fluxo Preditivo (4 cenários) ──
+  const CENARIOS = {
+    otimista:   { label:'🚀 Otimista',   cor:'var(--success)', mEnt:1.20, mSai:0.95, desc:'Novos negócios +20%, custos -5%' },
+    realista:   { label:'🎯 Realista',   cor:'var(--accent2)', mEnt:1.00, mSai:1.00, desc:'Mantém a média histórica' },
+    pessimista: { label:'⚠️ Pessimista', cor:'var(--warn)',    mEnt:0.82, mSai:1.10, desc:'Receita -18%, custos +10%' },
+    estresse:   { label:'🔴 Estresse',   cor:'var(--danger)',  mEnt:0.55, mSai:1.15, desc:'Crise: receita -45%, custos +15%' },
+  };
+  const mesNome = ym => { const [y,m]=ym.split('-'); return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+m-1]+'/'+y.slice(2); };
+  function projetar(cenKey) {
+    const c = CENARIOS[cenKey];
+    const base = new Date(); base.setDate(1);
+    let acum = Number(saldoInicial) || 0;
+    const linhas = [];
+    for (let i=0; i<horizonte; i++) {
+      const d = new Date(base.getFullYear(), base.getMonth()+i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      const tit = preditivoBase.titulosPorMes[ym] || { receber:0, pagar:0 };
+      const entradas = tit.receber + preditivoBase.mediaEntradas * c.mEnt;
+      const saidas   = tit.pagar   + preditivoBase.mediaSaidas   * c.mSai;
+      acum += (entradas - saidas);
+      linhas.push({ ym, entradas, saidas, saldoMes: entradas-saidas, acumulado: acum, titulos: tit.receber+tit.pagar>0 });
+    }
+    return { linhas, saldoFinal: acum };
+  }
+  const projAtual = projetar(cenario);
+  const projTotEntradas = projAtual.linhas.reduce((s,l)=>s+l.entradas,0);
+  const projTotSaidas   = projAtual.linhas.reduce((s,l)=>s+l.saidas,0);
+  const semHistorico = preditivoBase.mediaEntradas===0 && preditivoBase.mediaSaidas===0 && Object.keys(preditivoBase.titulosPorMes).length===0;
+
   const StatusSelect = ({ id, value }) => (
     <select
       style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,fontSize:11,cursor:'pointer',padding:'2px 6px',
@@ -1321,12 +1357,17 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
 
       {/* KPIs */}
       <div className="metrics-grid mb-16">
-        {(tab===0 ? [
+        {(tab===0 ? (fluxoView==='preditivo' ? [
+          { label:'Entradas Projetadas', val:fmt(projTotEntradas), c:'var(--success)' },
+          { label:'Saídas Projetadas',   val:fmt(projTotSaidas),   c:'var(--danger)'  },
+          { label:`Saldo em ${horizonte}m`, val:fmt(projAtual.saldoFinal), c:projAtual.saldoFinal>=0?'var(--accent)':'var(--danger)' },
+          { label:'Cenário', val:CENARIOS[cenario].label, c:'var(--accent2)' },
+        ] : [
           { label: fluxoView==='projetado'?'Entradas Previstas':'Entradas Realizadas', val:fmt(fluxoEntradas), c:'var(--success)' },
           { label: fluxoView==='projetado'?'Saídas Previstas':'Saídas Realizadas',     val:fmt(fluxoSaidas),   c:'var(--danger)'  },
           { label: fluxoView==='projetado'?'Saldo Projetado':'Saldo Realizado',        val:fmt(fluxoEntradas-fluxoSaidas), c:(fluxoEntradas-fluxoSaidas)>=0?'var(--accent)':'var(--danger)' },
           { label:'Títulos',     val:fluxoLista.length, c:'var(--accent2)' },
-        ] : [
+        ]) : [
           { label:'Entradas',     val:fmt(fluxo.entradas), c:'var(--success)' },
           { label:'Saídas',       val:fmt(fluxo.saidas),   c:'var(--danger)'  },
           { label:'Saldo',        val:fmt(fluxo.saldo),    c:fluxo.saldo>=0?'var(--accent)':'var(--danger)' },
@@ -1452,6 +1493,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                 {[
                   {k:'projetado',l:'📅 Projetado (Previsto)'},
                   {k:'realizado',l:'✅ Realizado'},
+                  {k:'preditivo',l:'🔮 Preditivo'},
                 ].map(v=>(
                   <button key={v.k}
                     className={`btn ${fluxoView===v.k?'btn-primary':'btn-ghost'}`}
@@ -1462,11 +1504,88 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
               <span style={{fontSize:11,color:'var(--text3)'}}>
                 {fluxoView==='projetado'
                   ? 'Títulos em aberto e vencidos (por vencimento) — alimentado por Contas a Pagar/Receber'
-                  : 'Recebimentos e pagamentos já baixados (por data de liquidação)'}
+                  : fluxoView==='realizado'
+                  ? 'Recebimentos e pagamentos já baixados (por data de liquidação)'
+                  : 'Projeção dos próximos meses: títulos em aberto + média histórica, sob 4 cenários'}
               </span>
             </div>
 
-            {loading ? (
+            {fluxoView==='preditivo' ? (
+              semHistorico ? (
+                <div className="empty">
+                  <div style={{fontSize:36,marginBottom:8}}>🔮</div>
+                  <div style={{fontSize:14,color:'var(--text2)',marginBottom:4}}>Sem dados suficientes para projetar</div>
+                  <div style={{fontSize:12,color:'var(--text3)'}}>A projeção usa o histórico de movimentações realizadas e os títulos em aberto. Registre alguns lançamentos/títulos para começar.</div>
+                </div>
+              ) : (
+              <div className="card-body" style={{padding:18}}>
+                {/* Seletor de cenários */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:16}}>
+                  {Object.entries(CENARIOS).map(([k,c])=>{
+                    const proj = projetar(k);
+                    const ativo = cenario===k;
+                    return (
+                      <div key={k} onClick={()=>setCenario(k)} style={{
+                        cursor:'pointer',borderRadius:12,padding:'12px 14px',
+                        border:`2px solid ${ativo?c.cor:'var(--border)'}`,
+                        background:ativo?'var(--bg)':'transparent'}}>
+                        <div style={{fontWeight:800,fontSize:13,color:c.cor}}>{c.label}</div>
+                        <div style={{fontSize:10,color:'var(--text3)',margin:'3px 0 8px',lineHeight:1.3}}>{c.desc}</div>
+                        <div style={{fontSize:10,color:'var(--text3)'}}>Saldo em {horizonte} meses</div>
+                        <div style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:16,color:proj.saldoFinal>=0?'var(--accent)':'var(--danger)'}}>{fmt(proj.saldoFinal)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Parâmetros */}
+                <div style={{display:'flex',gap:16,flexWrap:'wrap',alignItems:'center',marginBottom:14,padding:'10px 14px',background:'var(--bg)',borderRadius:10}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:12,color:'var(--text2)',fontWeight:600}}>Saldo inicial:</span>
+                    <input className="inp" type="number" step="0.01" style={{width:140}} value={saldoInicial} onChange={e=>setSaldoInicial(e.target.value)} />
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{fontSize:12,color:'var(--text2)',fontWeight:600}}>Horizonte:</span>
+                    {[3,6,12].map(h=>(
+                      <button key={h} className={`btn ${horizonte===h?'btn-primary':'btn-ghost'}`} style={{fontSize:11,padding:'4px 10px'}} onClick={()=>setHorizonte(h)}>{h}m</button>
+                    ))}
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text3)',marginLeft:'auto'}}>
+                    Base recorrente: entradas {fmt(preditivoBase.mediaEntradas)}/mês · saídas {fmt(preditivoBase.mediaSaidas)}/mês
+                  </div>
+                </div>
+
+                {/* Tabela de projeção do cenário ativo */}
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Mês</th>
+                        <th style={{textAlign:'right'}}>Entradas proj.</th>
+                        <th style={{textAlign:'right'}}>Saídas proj.</th>
+                        <th style={{textAlign:'right'}}>Resultado</th>
+                        <th style={{textAlign:'right'}}>Saldo acumulado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {projAtual.linhas.map(l=>(
+                        <tr key={l.ym}>
+                          <td style={{fontSize:12,fontWeight:600,color:'var(--text2)'}}>{mesNome(l.ym)} {l.titulos&&<span title="Tem títulos em aberto neste mês" style={{color:'var(--accent2)'}}>•</span>}</td>
+                          <td style={{textAlign:'right',color:'var(--success)',fontWeight:600}}>{fmt(l.entradas)}</td>
+                          <td style={{textAlign:'right',color:'var(--danger)',fontWeight:600}}>{fmt(l.saidas)}</td>
+                          <td style={{textAlign:'right',fontWeight:700,color:l.saldoMes>=0?'var(--accent)':'var(--danger)'}}>{fmt(l.saldoMes)}</td>
+                          <td style={{textAlign:'right',fontFamily:'var(--font-head)',fontWeight:800,color:l.acumulado>=0?'var(--accent)':'var(--danger)'}}>{fmt(l.acumulado)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{fontSize:11,color:'var(--text3)',padding:'10px 4px 0'}}>
+                  • = mês com títulos já contratados. Os títulos em aberto são compromissos firmes (não variam por cenário); o que o cenário ajusta é a expectativa de novos negócios/custos (média histórica).
+                </div>
+              </div>
+              )
+            ) : loading ? (
               <div style={{textAlign:'center',padding:32,color:'var(--text3)'}}>⏳ Carregando...</div>
             ) : fluxoLista.length === 0 ? (
               <div className="empty">

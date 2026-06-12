@@ -437,6 +437,29 @@ export const NotasFiscais = {
   },
   async criar(dados) { return supabase.from('notas_fiscais').insert(dados).select().single() },
   async buscarPorChave(chave) { return supabase.from('notas_fiscais').select('*').eq('chave_acesso', chave).single() },
+
+  // Créditos IVA: impostos de notas de ENTRADA (compras/insumos = creditável) vs SAÍDA (vendas = débito)
+  async creditosIVA(empresaId, ano, clienteId = null) {
+    const z = () => ({ icms: 0, pis: 0, cofins: 0, iss: 0, ipi: 0, inss: 0, valor_total: 0, qtd: 0 })
+    if (!clienteId) return { entrada: z(), saida: z() }
+    const { data } = await supabase.from('notas_fiscais')
+      .select('operacao, valor_total, valor_icms, valor_pis, valor_cofins, valor_iss, valor_ipi, valor_inss')
+      .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).eq('status', 'autorizada')
+      .gte('data_emissao', `${ano}-01-01`).lte('data_emissao', `${ano}-12-31`)
+    const acc = { entrada: z(), saida: z() }
+    ;(data || []).forEach(nf => {
+      const b = nf.operacao === 'entrada' ? acc.entrada : acc.saida
+      b.icms        += Number(nf.valor_icms   || 0)
+      b.pis         += Number(nf.valor_pis    || 0)
+      b.cofins      += Number(nf.valor_cofins || 0)
+      b.iss         += Number(nf.valor_iss    || 0)
+      b.ipi         += Number(nf.valor_ipi    || 0)
+      b.inss        += Number(nf.valor_inss   || 0)
+      b.valor_total += Number(nf.valor_total  || 0)
+      b.qtd += 1
+    })
+    return acc
+  },
   async totaisTributarios(empresaId, ano, clienteId = null) {
     if (!clienteId) return { icms: 0, pis: 0, cofins: 0, iss: 0, ipi: 0, inss: 0 }
     const { data } = await supabase.from('notas_fiscais')

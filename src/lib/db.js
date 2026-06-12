@@ -592,6 +592,33 @@ export const Fluxo = {
     const noPeriodo = arr => arr.filter(x => x.data && x.data >= inicio && x.data <= fim)
     return { projetado: noPeriodo(projetado), realizado: noPeriodo(realizado) }
   },
+
+  // Base para o Fluxo Preditivo: média histórica do realizado + títulos em aberto por mês de vencimento
+  async preditivoBase(empresaId, clienteId) {
+    if (!clienteId) return { mediaEntradas: 0, mediaSaidas: 0, titulosPorMes: {} }
+    const ev = await Lancamentos.evolucao12Meses(empresaId, clienteId)
+    const comMov = ev.filter(e => (e.entradas || 0) > 0 || (e.saidas || 0) > 0)
+    const div = comMov.length || 1
+    const mediaEntradas = comMov.reduce((s, e) => s + (e.entradas || 0), 0) / div
+    const mediaSaidas   = comMov.reduce((s, e) => s + (e.saidas   || 0), 0) / div
+
+    const [cr, cp] = await Promise.all([
+      supabase.from('contas_receber').select('valor, valor_recebido, vencimento')
+        .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).in('status', ['pendente', 'parcial']),
+      supabase.from('contas_pagar').select('valor, valor_pago, vencimento')
+        .eq('empresa_id', empresaId).eq('cliente_helevare_id', clienteId).in('status', ['pendente', 'parcial']),
+    ])
+    const titulosPorMes = {}
+    ;(cr.data || []).forEach(c => {
+      const ym = (c.vencimento || '').slice(0, 7); if (!ym) return
+      ;(titulosPorMes[ym] ||= { receber: 0, pagar: 0 }).receber += Number(c.valor) - Number(c.valor_recebido || 0)
+    })
+    ;(cp.data || []).forEach(c => {
+      const ym = (c.vencimento || '').slice(0, 7); if (!ym) return
+      ;(titulosPorMes[ym] ||= { receber: 0, pagar: 0 }).pagar += Number(c.valor) - Number(c.valor_pago || 0)
+    })
+    return { mediaEntradas, mediaSaidas, titulosPorMes }
+  },
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────

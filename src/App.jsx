@@ -673,18 +673,37 @@ function Dashboard({ empresaId, clienteId, openForm, recarregar }) {
   const [dados,   setDados]   = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Filtro de período
+  const _hoje = new Date();
+  const _pri = new Date(_hoje.getFullYear(), _hoje.getMonth(), 1).toISOString().slice(0,10);
+  const _ult = new Date(_hoje.getFullYear(), _hoje.getMonth()+1, 0).toISOString().slice(0,10);
+  const [dataInicio, setDataInicio] = useState(_pri);
+  const [dataFim,    setDataFim]    = useState(_ult);
+
   useEffect(() => {
     if (!empresaId) return;
     carregar();
-  }, [empresaId, clienteId]);
+  }, [empresaId, clienteId, dataInicio, dataFim]);
 
   async function carregar() {
     setLoading(true);
     try {
-      const r = await DashboardDB.resumo(empresaId, clienteId||null);
+      const r = await DashboardDB.resumo(empresaId, clienteId||null, { inicio: dataInicio, fim: dataFim });
       setDados(r);
     } catch(e) { console.error(e); }
     setLoading(false);
+  }
+
+  const fmtD = d => d ? new Date(d+'T12:00:00').toLocaleDateString('pt-BR') : '—';
+  function setPeriodo(tipo) {
+    const h = new Date();
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (tipo === 'mes')  { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),1)));   setDataFim(iso(new Date(h.getFullYear(),h.getMonth()+1,0))); }
+    if (tipo === 'trim') { const q=Math.floor(h.getMonth()/3)*3; setDataInicio(iso(new Date(h.getFullYear(),q,1))); setDataFim(iso(new Date(h.getFullYear(),q+3,0))); }
+    if (tipo === 'ano')  { setDataInicio(`${h.getFullYear()}-01-01`); setDataFim(`${h.getFullYear()}-12-31`); }
+    if (tipo === '7d')   { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),h.getDate()-6)));  setDataFim(iso(h)); }
+    if (tipo === '15d')  { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),h.getDate()-14))); setDataFim(iso(h)); }
+    if (tipo === '30d')  { setDataInicio(iso(new Date(h.getFullYear(),h.getMonth(),h.getDate()-29))); setDataFim(iso(h)); }
   }
 
   // Valores extraídos ou zeros
@@ -722,7 +741,7 @@ function Dashboard({ empresaId, clienteId, openForm, recarregar }) {
       <div className="section-header mb-20">
         <div>
           <div className="section-title">Dashboard Executivo</div>
-          <div className="section-sub">Dados reais · {new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</div>
+          <div className="section-sub">Dados reais · {fmtD(dataInicio)} até {fmtD(dataFim)}</div>
         </div>
         <div className="flex gap-8">
           <button className="btn btn-ghost" onClick={carregar}>🔄 Atualizar</button>
@@ -730,14 +749,31 @@ function Dashboard({ empresaId, clienteId, openForm, recarregar }) {
         </div>
       </div>
 
+      {/* Filtro de período */}
+      <div className="card mb-16">
+        <div className="card-body" style={{padding:'12px 18px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <span style={{fontSize:12,fontWeight:600,color:'var(--text2)'}}>📅 Período:</span>
+            <input type="date" className="inp" style={{width:145}} value={dataInicio} onChange={e=>setDataInicio(e.target.value)} />
+            <span style={{color:'var(--text3)',fontSize:12}}>até</span>
+            <input type="date" className="inp" style={{width:145}} value={dataFim} onChange={e=>setDataFim(e.target.value)} />
+            <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+              {[{l:'7d',t:'7d'},{l:'15d',t:'15d'},{l:'30d',t:'30d'},{l:'Mês',t:'mes'},{l:'Trim.',t:'trim'},{l:'Ano',t:'ano'}].map(p=>(
+                <button key={p.t} className="btn btn-ghost" style={{padding:'5px 10px',fontSize:11,borderRadius:6}} onClick={()=>setPeriodo(p.t)}>{p.l}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* KPIs principais */}
       <div className="kpi-row fade-up fade-up-1 mb-16">
         {[
-          { icon:"💹", label:"Entradas no Mês",   val: fmtK(entradas),  color:"#0090FF", bg:"rgba(0,144,255,0.1)"  },
-          { icon:"📉", label:"Saídas no Mês",      val: fmtK(saidas),    color:"#FF6B35", bg:"rgba(255,107,53,0.1)" },
-          { icon:"💰", label:"Saldo do Mês",        val: fmtK(saldo),     color: saldo>=0?"#00D4A0":"#FF4757", bg: saldo>=0?"rgba(0,212,160,0.1)":"rgba(255,71,87,0.1)" },
-          { icon:"⏳", label:"A Pagar (pendente)",  val: fmtK(aPagar),   color:"#FFB800", bg:"rgba(255,184,0,0.1)"  },
-          { icon:"🎯", label:"A Receber (pendente)",val: fmtK(aReceber), color:"#A855F7", bg:"rgba(168,85,247,0.1)" },
+          { icon:"💹", label:"Entradas no Período",   val: fmtK(entradas),  color:"#0090FF", bg:"rgba(0,144,255,0.1)"  },
+          { icon:"📉", label:"Saídas no Período",      val: fmtK(saidas),    color:"#FF6B35", bg:"rgba(255,107,53,0.1)" },
+          { icon:"💰", label:"Saldo do Período",        val: fmtK(saldo),     color: saldo>=0?"#00D4A0":"#FF4757", bg: saldo>=0?"rgba(0,212,160,0.1)":"rgba(255,71,87,0.1)" },
+          { icon:"⏳", label:"A Pagar (em aberto)",  val: fmtK(aPagar),   color:"#FFB800", bg:"rgba(255,184,0,0.1)"  },
+          { icon:"🎯", label:"A Receber (em aberto)",val: fmtK(aReceber), color:"#A855F7", bg:"rgba(168,85,247,0.1)" },
         ].map((k,i) => (
           <div key={i} className="kpi-item">
             <div className="kpi-icon-box" style={{background:k.bg}}><span>{k.icon}</span></div>
@@ -756,7 +792,7 @@ function Dashboard({ empresaId, clienteId, openForm, recarregar }) {
             <div className="alert alert-danger">
               <span className="alert-icon">🚨</span>
               <div className="alert-content">
-                <div className="alert-title">Saldo negativo no mês</div>
+                <div className="alert-title">Saldo negativo no período</div>
                 <div className="alert-desc">As saídas ({fmtK(saidas)}) superaram as entradas ({fmtK(entradas)}) em {fmt(Math.abs(saldo))}.</div>
               </div>
             </div>

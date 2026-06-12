@@ -2051,6 +2051,7 @@ function Tributario({ empresaId, clienteId }) {
     { nome:'Lucro Real', mes:lrMes, ef:receitaMensal?lrMes/receitaMensal:0, itens:[`Lucro real ${margemReal}%`,'PIS/COFINS 1,65%+7,6%','IRPJ/CSLL sobre lucro',`ISS ${issAliq}%`] },
   ];
   const melhor = regimes.reduce((a,b)=>a.mes<b.mes?a:b);
+  const regimeAtualObj = regimes.find(r=>r.nome===regimeAtual);
   const pct = v => `${(v*100).toFixed(1)}%`;
 
   return (
@@ -2114,12 +2115,21 @@ function Tributario({ empresaId, clienteId }) {
             })}
           </div>
 
-          {regimeAtual!=='—' && melhor.nome!==regimeAtual && (
+          {regimeAtualObj && melhor.nome!==regimeAtual && (
             <div className="alert alert-success mb-16">
               <span className="alert-icon">💡</span>
               <div className="alert-content">
                 <div className="alert-title">Possível economia mudando de regime</div>
-                <div className="alert-desc">Na simulação, o <strong>{melhor.nome}</strong> sai {fmt((regimes.find(r=>r.nome===regimeAtual).mes - melhor.mes)*12)}/ano mais barato que o regime atual ({regimeAtual}). Estimativa simplificada para serviços — confirme com a contabilidade.</div>
+                <div className="alert-desc">Na simulação, o <strong>{melhor.nome}</strong> sai {fmt((regimeAtualObj.mes - melhor.mes)*12)}/ano mais barato que o regime atual ({regimeAtual}). Estimativa simplificada para serviços — confirme com a contabilidade.</div>
+              </div>
+            </div>
+          )}
+          {regimeAtual==='MEI' && (
+            <div className="alert mb-16" style={{background:'rgba(0,144,255,0.06)',border:'1px solid var(--border)'}}>
+              <span className="alert-icon">ℹ️</span>
+              <div className="alert-content">
+                <div className="alert-title">Cliente enquadrado como MEI</div>
+                <div className="alert-desc">O MEI tem tributação fixa mensal (DAS-MEI) e limite de faturamento próprio, por isso não entra na comparação acima. Os cards servem como referência caso o faturamento ultrapasse o teto do MEI.</div>
               </div>
             </div>
           )}

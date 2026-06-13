@@ -19,7 +19,7 @@ import NovoCliente from "./pages/forms/NovoCliente";
 import CategoriasFinanceiras from "./pages/CategoriasFinanceiras";
 import Login from "./pages/Login";
 import { supabase } from "./lib/supabase";
-import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Fluxo, ContasBancarias, Dashboard as DashboardDB } from "./lib/db";
+import { Lancamentos, ContasPagar, ContasReceber, Clientes, Fornecedores, NotasFiscais, Categorias, Fluxo, ContasBancarias, MovimentacoesBancarias, Dashboard as DashboardDB } from "./lib/db";
 
 // ─── PALETTE & TOKENS ───────────────────────────────────────────────────────
 const CSS = `
@@ -1133,6 +1133,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
       valor: restante.toFixed(2),
       juros: '', multa: '', desconto: '',
       conta_bancaria_id: bancos[0]?.id || '',
+      registrarBanco: true,
     });
   }
 
@@ -1155,15 +1156,33 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     } else {
       await ContasReceber.receber(c.id, { ...payload, valorRecebidoAnterior: Number(c.valor_recebido||0) });
     }
+    // Movimentação bancária (atualiza o saldo da conta) — opcional via checkbox
+    if (f.registrarBanco && f.conta_bancaria_id) {
+      const liquido = payload.valor + payload.juros + payload.multa - payload.desconto;
+      await MovimentacoesBancarias.criar({
+        empresa_id: empresaId,
+        cliente_helevare_id: clienteId,
+        conta_id: f.conta_bancaria_id,
+        data_mov: payload.data,
+        descricao: `Baixa ${baixa.tipo==='pagar'?'pagamento':'recebimento'}: ${c.descricao||''}`.slice(0,200),
+        valor: baixa.tipo==='pagar' ? -liquido : liquido,
+        tipo:  baixa.tipo==='pagar' ? 'debito' : 'credito',
+        origem: 'baixa',
+        origem_tipo: baixa.tipo==='pagar' ? 'contas_pagar' : 'contas_receber',
+        origem_ref: c.id,
+        conciliado: true,
+      });
+    }
     setBaixando(false);
     setBaixa(null);
     await carregar();
   }
 
   async function estornar(tipo, id) {
-    if (!confirm('Estornar a baixa deste título? Ele volta para "Em Aberto".')) return;
+    if (!confirm('Estornar a baixa deste título? Ele volta para "Em Aberto" e a movimentação bancária gerada será removida.')) return;
     if (tipo === 'pagar') await ContasPagar.estornar(id);
     else await ContasReceber.estornar(id);
+    await MovimentacoesBancarias.removerPorOrigem(id);
     await carregar();
   }
 
@@ -1921,7 +1940,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                 <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Conta bancária</label>
                 <select className="inp" value={baixaForm.conta_bancaria_id} onChange={e=>setBaixaForm(f=>({...f,conta_bancaria_id:e.target.value}))}>
                   <option value="">— Selecione —</option>
-                  {bancos.map(b=>(<option key={b.id} value={b.id}>{b.nome||b.banco||b.apelido||b.descricao||'Conta'}</option>))}
+                  {bancos.map(b=>(<option key={b.id} value={b.id}>{b.apelido||b.banco_nome||(b.banco_codigo?`Banco ${b.banco_codigo}`:'')||'Conta'}{b.conta?` · ${b.conta}`:''}</option>))}
                 </select>
                 {bancos.length===0 && <div style={{fontSize:11,color:'var(--warn)',marginTop:4}}>Nenhuma conta bancária cadastrada (Gestão Bancária).</div>}
               </div>
@@ -1941,6 +1960,14 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                 <span style={{fontSize:12,color:'var(--text2)'}}>{isPagar?'Saída líquida no banco':'Entrada líquida no banco'}</span>
                 <span style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:17,color:isPagar?'var(--danger)':'var(--success)'}}>{fmt(liquido)}</span>
               </div>
+              <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',padding:'2px'}}>
+                <input type="checkbox" checked={baixaForm.registrarBanco!==false} disabled={!baixaForm.conta_bancaria_id}
+                  onChange={e=>setBaixaForm(f=>({...f,registrarBanco:e.target.checked}))} style={{marginTop:2,accentColor:'var(--accent)'}} />
+                <span style={{fontSize:12,color:'var(--text2)',lineHeight:1.4}}>
+                  Registrar no extrato da conta (atualiza o saldo bancário)
+                  <span style={{display:'block',fontSize:10,color:'var(--text3)'}}>Desmarque se você vai conciliar esse valor pelo OFX/extrato depois, para não duplicar.</span>
+                </span>
+              </label>
               {parcial && <div style={{fontSize:12,color:'var(--accent2)',background:'rgba(0,144,255,0.08)',borderRadius:8,padding:'8px 12px'}}>ℹ️ Baixa parcial — restará {fmt(restante-vAbater)}. O título fica como <strong>Parcial</strong>.</div>}
               <div style={{display:'flex',gap:10,marginTop:4}}>
                 <button style={{flex:1,padding:11,borderRadius:'var(--radius)',background:'transparent',color:'var(--text2)',border:'1px solid var(--border2)',cursor:'pointer'}}

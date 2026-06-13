@@ -541,6 +541,15 @@ export const ContasBancarias = {
   },
 }
 
+// ── MOVIMENTAÇÕES BANCÁRIAS ───────────────────────────────────
+export const MovimentacoesBancarias = {
+  async criar(dados) { return supabase.from('movimentacoes_bancarias').insert(dados).select().single() },
+  // remove a movimentação gerada por uma baixa (usado no estorno)
+  async removerPorOrigem(origemRef) {
+    return supabase.from('movimentacoes_bancarias').delete().eq('origem', 'baixa').eq('origem_ref', origemRef)
+  },
+}
+
 // ── PLANO DE CONTAS ───────────────────────────────────────────
 export const PlanoContas = {
   async listar(empresaId, clienteId = null, tipo = null) {

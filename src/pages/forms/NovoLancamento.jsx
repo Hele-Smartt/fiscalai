@@ -51,9 +51,10 @@ export default function NovoLancamento({ onBack, onSaved }) {
     setTimeout(() => { onSaved?.(); onBack?.() }, 1500)
   }
 
-  const catFiltradas = categorias.filter(c =>
-    form.tipo === 'entrada' ? c.tipo === 'receita' : c.tipo === 'despesa'
-  )
+  const catFiltradas = categorias
+    .filter(c => form.tipo === 'entrada' ? c.tipo === 'receita' : c.tipo === 'despesa')
+    .slice()
+    .sort((a,b) => (a.codigo||'zzz').localeCompare(b.codigo||'zzz', undefined, { numeric:true }))
 
   return (
     <>
@@ -112,7 +113,11 @@ export default function NovoLancamento({ onBack, onSaved }) {
               <Field label="Categoria">
                 <Select value={form.categoria_id} onChange={e=>set('categoria_id',e.target.value)}>
                   <option value="">— Selecione —</option>
-                  {catFiltradas.map(c=><option key={c.id} value={c.id}>{c.icone} {c.nome}</option>)}
+                  {catFiltradas.map(c=>{
+                    const depth = c.codigo ? c.codigo.split('.').length - 1 : 0;
+                    const ind = '\u00A0\u00A0\u00A0'.repeat(depth);
+                    return <option key={c.id} value={c.id}>{ind}{c.codigo?c.codigo+' ':''}{c.icone||''} {c.nome}</option>;
+                  })}
                 </Select>
               </Field>
             </div>

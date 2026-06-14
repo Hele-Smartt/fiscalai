@@ -3062,7 +3062,7 @@ function AppWithFormsAndCliente() {
     try { const r = await DashboardDB.resumo(empresa.id, clienteId||null); setDbData(r); }
     catch(e) { console.error(e); }
     setDbLoading(false);
-  }, [empresa?.id]);
+  }, [empresa?.id, clienteId]);
 
   useEffect(() => { carregarDados(); }, [carregarDados]);
 

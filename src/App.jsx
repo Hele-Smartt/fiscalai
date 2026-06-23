@@ -1151,15 +1151,23 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
       valorTotal: Number(c.valor),
     };
     setBaixando(true);
+    let baixaErr = null;
     if (baixa.tipo === 'pagar') {
-      await ContasPagar.pagar(c.id, { ...payload, valorPagoAnterior: Number(c.valor_pago||0) });
+      const { error } = await ContasPagar.pagar(c.id, { ...payload, valorPagoAnterior: Number(c.valor_pago||0) });
+      baixaErr = error;
     } else {
-      await ContasReceber.receber(c.id, { ...payload, valorRecebidoAnterior: Number(c.valor_recebido||0) });
+      const { error } = await ContasReceber.receber(c.id, { ...payload, valorRecebidoAnterior: Number(c.valor_recebido||0) });
+      baixaErr = error;
+    }
+    if (baixaErr) {
+      setBaixando(false);
+      alert('Não consegui registrar a baixa do título:\n\n' + (baixaErr.message||baixaErr) + '\n\nVerifique se a migração baixa_completa.sql foi executada.');
+      return;
     }
     // Movimentação bancária (atualiza o saldo da conta) — opcional via checkbox
     if (f.registrarBanco && f.conta_bancaria_id) {
       const liquido = payload.valor + payload.juros + payload.multa - payload.desconto;
-      await MovimentacoesBancarias.criar({
+      const { error: movErr } = await MovimentacoesBancarias.criar({
         empresa_id: empresaId,
         cliente_helevare_id: clienteId,
         conta_id: f.conta_bancaria_id,
@@ -1172,6 +1180,11 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
         origem_ref: c.id,
         conciliado: true,
       });
+      if (movErr) {
+        setBaixando(false); setBaixa(null); await carregar();
+        alert('A baixa foi registrada no título, mas NÃO consegui lançar no extrato bancário:\n\n' + (movErr.message||movErr) + '\n\nProvável causa: a migração baixa_banco.sql não foi executada (faltam as colunas origem_ref/origem_tipo em movimentacoes_bancarias).');
+        return;
+      }
     }
     setBaixando(false);
     setBaixa(null);

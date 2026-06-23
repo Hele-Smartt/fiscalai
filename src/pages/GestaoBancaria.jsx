@@ -146,6 +146,19 @@ export default function GestaoBancaria({ empresaId }) {
   const saldoOperacional = contas.filter(c=>c.tipo!=='investimento').reduce((s,c)=>s+(saldos[c.id]||0),0)
   const saldoPatrimonial = contas.reduce((s,c)=>s+(saldos[c.id]||0),0)
 
+  // Extrato com saldo corrente (acumulado) por linha
+  const contaSelObj = contas.find(c => c.id === contaSel)
+  const saldoInicialConta = Number(contaSelObj?.saldo_inicial) || 0
+  const saldoPorMov = (() => {
+    const asc = [...movs].sort((a,b) => (a.data_mov||'').localeCompare(b.data_mov||'') || (a.id||'').localeCompare(b.id||''))
+    let acc = saldoInicialConta
+    const map = {}
+    asc.forEach(m => { acc += Number(m.valor)||0; map[m.id] = acc })
+    return map
+  })()
+  const totalEntradas = movs.reduce((s,m) => s + (Number(m.valor)>0 ? Number(m.valor) : 0), 0)
+  const totalSaidas   = movs.reduce((s,m) => s + (Number(m.valor)<0 ? Number(m.valor) : 0), 0)
+
   async function salvarConta(e) {
     e.preventDefault()
     setSalvando(true); setErro('')
@@ -442,8 +455,13 @@ export default function GestaoBancaria({ empresaId }) {
           {contaSel ? (
             <div className="card">
               <div className="card-header">
-                <span className="card-title">Movimentações</span>
-                <span className="badge badge-info">{movs.length} lançamentos</span>
+                <span className="card-title">Extrato — Movimentações</span>
+                <div style={{display:'flex',gap:14,alignItems:'center',flexWrap:'wrap'}}>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>Entradas <strong style={{color:'var(--success)'}}>{fmt(totalEntradas)}</strong></span>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>Saídas <strong style={{color:'var(--danger)'}}>{fmt(totalSaidas)}</strong></span>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>Saldo atual <strong style={{color:'var(--accent)'}}>{fmt(saldos[contaSel]||0)}</strong></span>
+                  <span className="badge badge-info">{movs.length} lançamentos</span>
+                </div>
               </div>
               {movs.length===0 ? (
                 <div className="empty">
@@ -453,7 +471,7 @@ export default function GestaoBancaria({ empresaId }) {
               ) : (
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th>Categoria IA</th><th>Valor</th><th>Conciliado</th></tr></thead>
+                    <thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th>Categoria IA</th><th style={{textAlign:'right'}}>Valor</th><th style={{textAlign:'right'}}>Saldo</th><th>Conciliado</th></tr></thead>
                     <tbody>
                       {movs.map(m=>(
                         <tr key={m.id}>
@@ -481,8 +499,11 @@ export default function GestaoBancaria({ empresaId }) {
                               </div>
                             ) : <span style={{color:'var(--text3)',fontSize:12}}>—</span>}
                           </td>
-                          <td style={{fontFamily:'var(--font-head)',fontWeight:700,color:Number(m.valor)>=0?'var(--success)':'var(--danger)'}}>
+                          <td style={{textAlign:'right',fontFamily:'var(--font-head)',fontWeight:700,color:Number(m.valor)>=0?'var(--success)':'var(--danger)'}}>
                             {Number(m.valor)>=0?'+':''}{fmt(m.valor)}
+                          </td>
+                          <td style={{textAlign:'right',fontFamily:'var(--font-head)',fontWeight:700,color:(saldoPorMov[m.id]||0)>=0?'var(--text)':'var(--danger)'}}>
+                            {fmt(saldoPorMov[m.id]||0)}
                           </td>
                           <td>
                             {m.conciliado

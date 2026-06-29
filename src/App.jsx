@@ -1124,16 +1124,25 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   }
 
   // ── Baixa de títulos (pagar / receber) ──
+  const FORMAS = [
+    {v:'pix', l:'PIX'},
+    {v:'cartao_credito', l:'Cartão de Crédito'},
+    {v:'cartao_debito', l:'Cartão de Débito'},
+    {v:'dinheiro', l:'Dinheiro'},
+    {v:'ted', l:'TED'},
+    {v:'boleto', l:'Boleto'},
+  ];
+  const formaLabel = v => (FORMAS.find(x=>x.v===v)||{}).l || v;
+
   function abrirBaixa(tipo, conta) {
     const jaPago = Number(tipo==='pagar' ? conta.valor_pago : conta.valor_recebido) || 0;
     const restante = Number(conta.valor) - jaPago;
     setBaixa({ tipo, conta });
     setBaixaForm({
       data: new Date().toISOString().slice(0,10),
-      valor: restante.toFixed(2),
       juros: '', multa: '', desconto: '',
-      conta_bancaria_id: bancos[0]?.id || '',
       registrarBanco: true,
+      linhas: [{ forma:'pix', valor: restante.toFixed(2), conta_bancaria_id: bancos[0]?.id || '' }],
     });
   }
 
@@ -1141,13 +1150,18 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     if (!baixa) return;
     const f = baixaForm;
     const c = baixa.conta;
+    const linhas = (f.linhas||[]).filter(l => (parseFloat(l.valor)||0) > 0);
+    if (linhas.length === 0) { alert('Informe ao menos uma forma com valor.'); return; }
+    const somaLinhas = linhas.reduce((s,l)=>s+(parseFloat(l.valor)||0),0);
+    const ju = parseFloat(f.juros)||0, mu = parseFloat(f.multa)||0, de = parseFloat(f.desconto)||0;
+    const incremento = somaLinhas - ju - mu + de;   // principal aplicado ao título
+    const formasResumo = [...new Set(linhas.map(l=>formaLabel(l.forma)))].join(', ');
     const payload = {
       data: f.data,
-      valor: parseFloat(f.valor) || 0,
-      juros: parseFloat(f.juros) || 0,
-      multa: parseFloat(f.multa) || 0,
-      desconto: parseFloat(f.desconto) || 0,
-      conta_bancaria_id: f.conta_bancaria_id || null,
+      valor: incremento,
+      juros: ju, multa: mu, desconto: de,
+      conta_bancaria_id: linhas[0]?.conta_bancaria_id || null,
+      forma: formasResumo,
       valorTotal: Number(c.valor),
     };
     setBaixando(true);
@@ -1161,29 +1175,33 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     }
     if (baixaErr) {
       setBaixando(false);
-      alert('Não consegui registrar a baixa do título:\n\n' + (baixaErr.message||baixaErr) + '\n\nVerifique se a migração baixa_completa.sql foi executada.');
+      alert('Não consegui registrar a baixa do título:\n\n' + (baixaErr.message||baixaErr) + '\n\nVerifique se as migrações baixa_completa.sql e baixa_forma.sql foram executadas.');
       return;
     }
-    // Movimentação bancária (atualiza o saldo da conta) — opcional via checkbox
-    if (f.registrarBanco && f.conta_bancaria_id) {
-      const liquido = payload.valor + payload.juros + payload.multa - payload.desconto;
-      const { error: movErr } = await MovimentacoesBancarias.criar({
-        empresa_id: empresaId,
-        cliente_helevare_id: clienteId,
-        conta_id: f.conta_bancaria_id,
-        data_mov: payload.data,
-        descricao: `Baixa ${baixa.tipo==='pagar'?'pagamento':'recebimento'}: ${c.descricao||''}`.slice(0,200),
-        valor: baixa.tipo==='pagar' ? -liquido : liquido,
-        tipo:  baixa.tipo==='pagar' ? 'debito' : 'credito',
-        origem: 'baixa',
-        origem_tipo: baixa.tipo==='pagar' ? 'contas_pagar' : 'contas_receber',
-        origem_ref: c.id,
-        conciliado: true,
-      });
-      if (movErr) {
-        setBaixando(false); setBaixa(null); await carregar();
-        alert('A baixa foi registrada no título, mas NÃO consegui lançar no extrato bancário:\n\n' + (movErr.message||movErr) + '\n\nProvável causa: a migração baixa_banco.sql não foi executada (faltam as colunas origem_ref/origem_tipo em movimentacoes_bancarias).');
-        return;
+    // Uma movimentação bancária por forma (atualiza o saldo da conta) — opcional via checkbox
+    if (f.registrarBanco) {
+      for (const l of linhas) {
+        if (!l.conta_bancaria_id) continue;
+        const v = parseFloat(l.valor)||0;
+        const { error: movErr } = await MovimentacoesBancarias.criar({
+          empresa_id: empresaId,
+          cliente_helevare_id: clienteId,
+          conta_id: l.conta_bancaria_id,
+          data_mov: payload.data,
+          descricao: `Baixa ${baixa.tipo==='pagar'?'pagamento':'recebimento'} (${formaLabel(l.forma)}): ${c.descricao||''}`.slice(0,200),
+          valor: baixa.tipo==='pagar' ? -v : v,
+          tipo:  baixa.tipo==='pagar' ? 'debito' : 'credito',
+          forma: l.forma,
+          origem: 'baixa',
+          origem_tipo: baixa.tipo==='pagar' ? 'contas_pagar' : 'contas_receber',
+          origem_ref: c.id,
+          conciliado: true,
+        });
+        if (movErr) {
+          setBaixando(false); setBaixa(null); await carregar();
+          alert('A baixa foi registrada no título, mas NÃO consegui lançar no extrato bancário:\n\n' + (movErr.message||movErr) + '\n\nProvável causa: faltou rodar baixa_banco.sql / baixa_forma.sql (colunas origem_ref, origem_tipo, forma).');
+          return;
+        }
       }
     }
     setBaixando(false);
@@ -1927,66 +1945,93 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
         const isPagar = baixa.tipo==='pagar';
         const jaBaixado = Number(isPagar?c.valor_pago:c.valor_recebido)||0;
         const restante = Number(c.valor)-jaBaixado;
-        const vAbater = parseFloat(baixaForm.valor)||0;
-        const liquido = vAbater + (parseFloat(baixaForm.juros)||0) + (parseFloat(baixaForm.multa)||0) - (parseFloat(baixaForm.desconto)||0);
-        const parcial = vAbater>0 && vAbater < restante-0.009;
+        const linhas = baixaForm.linhas||[];
+        const somaLinhas = linhas.reduce((s,l)=>s+(parseFloat(l.valor)||0),0);
+        const ju=parseFloat(baixaForm.juros)||0, mu=parseFloat(baixaForm.multa)||0, de=parseFloat(baixaForm.desconto)||0;
+        const aplicado = somaLinhas - ju - mu + de;     // principal aplicado ao título
+        const parcial = aplicado>0 && aplicado < restante-0.009;
+        const temAjuste = ju>0||mu>0||de>0;
+        const setLinha = (i,patch)=>setBaixaForm(f=>({...f,linhas:f.linhas.map((l,j)=>j===i?{...l,...patch}:l)}));
+        const addLinha = ()=>setBaixaForm(f=>({...f,linhas:[...f.linhas,{forma:'pix',valor:'',conta_bancaria_id:bancos[0]?.id||''}]}));
+        const delLinha = (i)=>setBaixaForm(f=>({...f,linhas:f.linhas.filter((_,j)=>j!==i)}));
         return (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:20}}
           onClick={e=>e.target===e.currentTarget&&setBaixa(null)}>
-          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,padding:32,width:'100%',maxWidth:460}}>
+          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:20,padding:32,width:'100%',maxWidth:540,maxHeight:'90vh',overflowY:'auto'}}>
             <div style={{fontFamily:'var(--font-head)',fontSize:17,fontWeight:800,marginBottom:4}}>
               {isPagar?'💸 Baixar Conta a Pagar':'💰 Baixar Conta a Receber'}
             </div>
             <div style={{fontSize:13,color:'var(--text2)',marginBottom:16}}>{c.descricao} · total {fmt(c.valor)}{jaBaixado>0&&` · já ${isPagar?'pago':'recebido'} ${fmt(jaBaixado)}`} · resta <strong style={{color:'var(--text)'}}>{fmt(restante)}</strong></div>
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
-              <div style={{display:'flex',gap:10}}>
-                <div style={{flex:1}}>
-                  <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Data {isPagar?'do pagamento':'do recebimento'}</label>
-                  <input className="inp" type="date" value={baixaForm.data} onChange={e=>setBaixaForm(f=>({...f,data:e.target.value}))} />
-                </div>
-                <div style={{flex:1}}>
-                  <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Valor a {isPagar?'pagar':'receber'} (R$)</label>
-                  <input className="inp" type="number" step="0.01" value={baixaForm.valor} onChange={e=>setBaixaForm(f=>({...f,valor:e.target.value}))} />
-                </div>
-              </div>
               <div>
-                <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Conta bancária</label>
-                <select className="inp" value={baixaForm.conta_bancaria_id} onChange={e=>setBaixaForm(f=>({...f,conta_bancaria_id:e.target.value}))}>
-                  <option value="">— Selecione —</option>
-                  {bancos.map(b=>(<option key={b.id} value={b.id}>{b.apelido||b.banco_nome||(b.banco_codigo?`Banco ${b.banco_codigo}`:'')||'Conta'}{b.conta?` · ${b.conta}`:''}</option>))}
-                </select>
-                {bancos.length===0 && <div style={{fontSize:11,color:'var(--warn)',marginTop:4}}>Nenhuma conta bancária cadastrada (Gestão Bancária).</div>}
+                <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>Data {isPagar?'do pagamento':'do recebimento'}</label>
+                <input className="inp" type="date" style={{maxWidth:200}} value={baixaForm.data} onChange={e=>setBaixaForm(f=>({...f,data:e.target.value}))} />
               </div>
+
+              {/* Formas de recebimento/pagamento */}
+              <div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                  <label style={{fontSize:12,fontWeight:600,color:'var(--text2)'}}>{isPagar?'Formas de pagamento':'Formas de recebimento'}</label>
+                  <button type="button" className="btn btn-ghost" style={{fontSize:11,padding:'3px 10px'}} onClick={addLinha}>＋ Adicionar forma</button>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {linhas.map((l,i)=>(
+                    <div key={i} style={{display:'flex',gap:6,alignItems:'center'}}>
+                      <select className="inp" style={{flex:'0 0 130px',height:38}} value={l.forma} onChange={e=>setLinha(i,{forma:e.target.value})}>
+                        {FORMAS.map(fo=>(<option key={fo.v} value={fo.v}>{fo.l}</option>))}
+                      </select>
+                      <input className="inp" style={{flex:'0 0 110px',height:38}} type="number" step="0.01" placeholder="0,00" value={l.valor} onChange={e=>setLinha(i,{valor:e.target.value})} />
+                      <select className="inp" style={{flex:1,height:38}} value={l.conta_bancaria_id} onChange={e=>setLinha(i,{conta_bancaria_id:e.target.value})}>
+                        <option value="">— Conta —</option>
+                        {bancos.map(b=>(<option key={b.id} value={b.id}>{b.apelido||b.banco_nome||(b.banco_codigo?`Banco ${b.banco_codigo}`:'')||'Conta'}{b.conta?` · ${b.conta}`:''}</option>))}
+                      </select>
+                      {linhas.length>1 && <button type="button" onClick={()=>delLinha(i)} style={{background:'transparent',border:'none',color:'var(--danger)',cursor:'pointer',fontSize:16,padding:'0 4px'}}>✕</button>}
+                    </div>
+                  ))}
+                </div>
+                {bancos.length===0 && <div style={{fontSize:11,color:'var(--warn)',marginTop:4}}>Nenhuma conta bancária cadastrada (Gestão Bancária) — o saldo não será atualizado.</div>}
+              </div>
+
               <div style={{display:'flex',gap:10}}>
                 {[
                   {k:'juros',l:'Juros (R$)'},
                   {k:'multa',l:'Multa (R$)'},
                   {k:'desconto',l:'Desconto (R$)'},
-                ].map(f=>(
-                  <div key={f.k} style={{flex:1}}>
-                    <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>{f.l}</label>
-                    <input className="inp" type="number" step="0.01" placeholder="0,00" value={baixaForm[f.k]} onChange={e=>setBaixaForm(bf=>({...bf,[f.k]:e.target.value}))} />
+                ].map(fld=>(
+                  <div key={fld.k} style={{flex:1}}>
+                    <label style={{fontSize:12,fontWeight:600,color:'var(--text2)',display:'block',marginBottom:4}}>{fld.l}</label>
+                    <input className="inp" type="number" step="0.01" placeholder="0,00" value={baixaForm[fld.k]} onChange={e=>setBaixaForm(bf=>({...bf,[fld.k]:e.target.value}))} />
                   </div>
                 ))}
               </div>
-              <div style={{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <span style={{fontSize:12,color:'var(--text2)'}}>{isPagar?'Saída líquida no banco':'Entrada líquida no banco'}</span>
-                <span style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:17,color:isPagar?'var(--danger)':'var(--success)'}}>{fmt(liquido)}</span>
+
+              <div style={{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px',display:'flex',flexDirection:'column',gap:6}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:12,color:'var(--text2)'}}>{isPagar?'Total pago (no banco)':'Total recebido (no banco)'}</span>
+                  <span style={{fontFamily:'var(--font-head)',fontWeight:800,fontSize:17,color:isPagar?'var(--danger)':'var(--success)'}}>{fmt(somaLinhas)}</span>
+                </div>
+                {temAjuste && (
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1px solid var(--border)',paddingTop:6}}>
+                    <span style={{fontSize:11,color:'var(--text3)'}}>Aplicado ao título (principal)</span>
+                    <span style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>{fmt(aplicado)}</span>
+                  </div>
+                )}
               </div>
+
               <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',padding:'2px'}}>
-                <input type="checkbox" checked={baixaForm.registrarBanco!==false} disabled={!baixaForm.conta_bancaria_id}
+                <input type="checkbox" checked={baixaForm.registrarBanco!==false}
                   onChange={e=>setBaixaForm(f=>({...f,registrarBanco:e.target.checked}))} style={{marginTop:2,accentColor:'var(--accent)'}} />
                 <span style={{fontSize:12,color:'var(--text2)',lineHeight:1.4}}>
-                  Registrar no extrato da conta (atualiza o saldo bancário)
-                  <span style={{display:'block',fontSize:10,color:'var(--text3)'}}>Desmarque se você vai conciliar esse valor pelo OFX/extrato depois, para não duplicar.</span>
+                  Registrar no extrato das contas (atualiza os saldos bancários)
+                  <span style={{display:'block',fontSize:10,color:'var(--text3)'}}>Cria uma movimentação por forma. Desmarque se vai conciliar pelo OFX depois, para não duplicar.</span>
                 </span>
               </label>
-              {parcial && <div style={{fontSize:12,color:'var(--accent2)',background:'rgba(0,144,255,0.08)',borderRadius:8,padding:'8px 12px'}}>ℹ️ Baixa parcial — restará {fmt(restante-vAbater)}. O título fica como <strong>Parcial</strong>.</div>}
+              {parcial && <div style={{fontSize:12,color:'var(--accent2)',background:'rgba(0,144,255,0.08)',borderRadius:8,padding:'8px 12px'}}>ℹ️ Baixa parcial — restará {fmt(restante-aplicado)}. O título fica como <strong>Parcial</strong>.</div>}
               <div style={{display:'flex',gap:10,marginTop:4}}>
                 <button style={{flex:1,padding:11,borderRadius:'var(--radius)',background:'transparent',color:'var(--text2)',border:'1px solid var(--border2)',cursor:'pointer'}}
                   onClick={()=>setBaixa(null)}>Cancelar</button>
-                <button style={{flex:2,padding:11,borderRadius:'var(--radius)',background:'var(--accent)',color:'var(--bg)',border:'none',cursor:'pointer',fontFamily:'var(--font-head)',fontWeight:700,opacity:(vAbater<=0||baixando)?0.5:1}}
-                  onClick={confirmarBaixa} disabled={vAbater<=0||baixando}>
+                <button style={{flex:2,padding:11,borderRadius:'var(--radius)',background:'var(--accent)',color:'var(--bg)',border:'none',cursor:'pointer',fontFamily:'var(--font-head)',fontWeight:700,opacity:(somaLinhas<=0||baixando)?0.5:1}}
+                  onClick={confirmarBaixa} disabled={somaLinhas<=0||baixando}>
                   {baixando?'⏳ Processando...':parcial?'✅ Confirmar baixa parcial':'✅ Confirmar baixa'}
                 </button>
               </div>

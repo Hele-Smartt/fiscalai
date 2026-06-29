@@ -34,6 +34,16 @@ export default function NovaContaPagar({ onBack, onSaved, editData = null }) {
     Fornecedores.listar(empresa.id).then(({ data }) => setFornecedores(data || []))
   }, [empresa?.id])
 
+  // soma N meses a uma data ISO, ajustando o dia ao último dia do mês quando necessário
+  function addMeses(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number)
+    const base = new Date(y, m - 1 + n, 1)
+    const ano = base.getFullYear(), mes = base.getMonth()
+    const ultimoDia = new Date(ano, mes + 1, 0).getDate()
+    const dia = Math.min(d, ultimoDia)
+    return `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.descricao || !form.valor || !form.vencimento) {
@@ -41,24 +51,66 @@ export default function NovaContaPagar({ onBack, onSaved, editData = null }) {
     }
     setLoading(true); setErro('')
 
-    const dados = {
-      ...form,
+    const base = {
       empresa_id:    empresa.id,
       cliente_helevare_id: clienteId || null,
+      descricao:     form.descricao,
       valor:         parseFloat(form.valor),
+      vencimento:    form.vencimento,
+      status:        form.status,
       fornecedor_id: form.fornecedor_id || null,
       categoria_id:  form.categoria_id  || null,
-      parcelas:      parseInt(form.parcelas) || 1,
+      observacao:    form.observacao || null,
+      recorrente:    false,
+      parcelas:      1,
     }
 
-    const { error } = editData
-      ? await ContasPagar.atualizar(editData.id, dados)
-      : await ContasPagar.criar(dados)
+    // Edição: atualiza só o registro (não regenera parcelas)
+    if (editData) {
+      const { error } = await ContasPagar.atualizar(editData.id, { ...base, recorrente: form.recorrente, parcelas: parseInt(form.parcelas) || 1 })
+      setLoading(false)
+      if (error) { setErro(error.message); return }
+      setSucesso(true); setTimeout(() => { onSaved?.(); onBack?.() }, 1200); return
+    }
+
+    const recorrente = form.recorrente === true || form.recorrente === 'true'
+    const nParc = parseInt(form.parcelas) || 1
+    const meses = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']
+    let linhas = []
+
+    if (recorrente) {
+      // um lançamento por mês, do mês do vencimento até dezembro do exercício (ano do vencimento)
+      const mesV = Number(form.vencimento.slice(5, 7))   // 1-12
+      const qtd = 12 - mesV + 1
+      for (let i = 0; i < qtd; i++) {
+        const venc = addMeses(form.vencimento, i)
+        const lbl = `${meses[Number(venc.slice(5, 7)) - 1]}/${venc.slice(0, 4)}`
+        linhas.push({ ...base, status: 'pendente', recorrente: true, parcelas: 1, parcela_atual: null,
+          vencimento: venc, descricao: `${form.descricao} (${lbl})` })
+      }
+    } else if (nParc > 1) {
+      // N parcelas mensais; valor total dividido (última parcela absorve o arredondamento)
+      const total = parseFloat(form.valor)
+      const parc = Math.floor((total / nParc) * 100) / 100
+      for (let i = 0; i < nParc; i++) {
+        const ultima = i === nParc - 1
+        const valorParc = ultima ? Math.round((total - parc * (nParc - 1)) * 100) / 100 : parc
+        linhas.push({ ...base, status: 'pendente', recorrente: false, parcelas: nParc, parcela_atual: i + 1,
+          valor: valorParc, vencimento: addMeses(form.vencimento, i),
+          descricao: `${form.descricao} (${i + 1}/${nParc})` })
+      }
+    } else {
+      linhas = [base]
+    }
+
+    const { error } = linhas.length === 1
+      ? await ContasPagar.criar(linhas[0])
+      : await ContasPagar.criarVarios(linhas)
 
     setLoading(false)
     if (error) { setErro(error.message); return }
     setSucesso(true)
-    setTimeout(() => { onSaved?.(); onBack?.() }, 1500)
+    setTimeout(() => { onSaved?.(); onBack?.() }, 1200)
   }
 
   return (
@@ -135,6 +187,20 @@ export default function NovaContaPagar({ onBack, onSaved, editData = null }) {
                 <Input placeholder="Nota interna..." value={form.observacao} onChange={e => set('observacao', e.target.value)} />
               </Field>
             </div>
+            {(() => {
+              const recorrente = form.recorrente === true || form.recorrente === 'true'
+              const nParc = parseInt(form.parcelas) || 1
+              let msg = null
+              if (recorrente && form.vencimento) {
+                const qtd = 12 - Number(form.vencimento.slice(5, 7)) + 1
+                msg = `🔁 Serão gerados ${qtd} lançamentos mensais (do mês do vencimento até dez/${form.vencimento.slice(0, 4)}), um por mês.`
+              } else if (!recorrente && nParc > 1) {
+                msg = `📋 Serão geradas ${nParc} parcelas mensais a partir do vencimento. O valor informado é o TOTAL e será dividido entre as parcelas.`
+              }
+              return msg ? (
+                <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(0,144,255,0.08)', border: '1px solid rgba(0,144,255,0.25)', fontSize: 12.5, color: 'var(--text2)' }}>{msg}</div>
+              ) : null
+            })()}
           </div>
 
           <div className="form-actions">

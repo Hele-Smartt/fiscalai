@@ -19,9 +19,12 @@ export default function NovoCliente({ onBack, onSaved, editData = null }) {
     email:     editData?.email     || '',
     telefone:  editData?.telefone  || '',
     endereco:  editData?.endereco  || '',
+    numero:    editData?.numero    || '',
+    bairro:    editData?.bairro    || '',
     cidade:    editData?.cidade    || '',
     estado:    editData?.estado    || '',
     cep:       editData?.cep       || '',
+    codigo_ibge: editData?.codigo_ibge || '',
     tipo:      editData?.tipo      || 'pj',
     limite_credito: editData?.limite_credito || '',
   })
@@ -107,16 +110,21 @@ export default function NovoCliente({ onBack, onSaved, editData = null }) {
             <div className="form-grid" style={{gap:16}}>
               <div className="form-grid form-grid-2">
                 <Field label="CEP"><Input placeholder="00000-000" value={form.cep} onChange={e=>set('cep',e.target.value)} /></Field>
-                <Field label="Endereço"><Input placeholder="Rua, número" value={form.endereco} onChange={e=>set('endereco',e.target.value)} /></Field>
+                <Field label="Número"><Input placeholder="123" value={form.numero} onChange={e=>set('numero',e.target.value)} /></Field>
+              </div>
+              <Field label="Endereço (logradouro)"><Input placeholder="Rua / Avenida" value={form.endereco} onChange={e=>set('endereco',e.target.value)} /></Field>
+              <div className="form-grid form-grid-2">
+                <Field label="Bairro"><Input placeholder="Centro" value={form.bairro} onChange={e=>set('bairro',e.target.value)} /></Field>
+                <Field label="Cidade"><Input placeholder="Votuporanga" value={form.cidade} onChange={e=>set('cidade',e.target.value)} /></Field>
               </div>
               <div className="form-grid form-grid-2">
-                <Field label="Cidade"><Input placeholder="Votuporanga" value={form.cidade} onChange={e=>set('cidade',e.target.value)} /></Field>
                 <Field label="Estado">
                   <Select value={form.estado} onChange={e=>set('estado',e.target.value)}>
                     <option value="">— UF —</option>
                     {estados.map(uf=><option key={uf}>{uf}</option>)}
                   </Select>
                 </Field>
+                <Field label="Código IBGE" hint="Código do município (7 dígitos)"><Input placeholder="3557105" value={form.codigo_ibge} onChange={e=>set('codigo_ibge',e.target.value)} /></Field>
               </div>
             </div>
           </div>

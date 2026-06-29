@@ -284,6 +284,10 @@ export const ContasPagar = {
     return supabase.from('contas_pagar').insert(dados).select().single()
   },
 
+  async criarVarios(lista) {
+    return supabase.from('contas_pagar').insert(lista).select()
+  },
+
   // Baixa completa (aceita baixa parcial). baixa = {
   //   data, valor (pago agora), juros, multa, desconto, conta_bancaria_id,
   //   valorTotal (valor do título), valorPagoAnterior (acumulado já pago)
@@ -349,6 +353,10 @@ export const ContasReceber = {
 
   async criar(dados) {
     return supabase.from('contas_receber').insert(dados).select().single()
+  },
+
+  async criarVarios(lista) {
+    return supabase.from('contas_receber').insert(lista).select()
   },
 
   // Baixa completa (aceita baixa parcial). baixa = {

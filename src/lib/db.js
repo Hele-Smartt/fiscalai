@@ -300,12 +300,13 @@ export const ContasPagar = {
       multa:             Number(baixa.multa || 0),
       desconto:          Number(baixa.desconto || 0),
       conta_bancaria_id: baixa.conta_bancaria_id || null,
+      forma: baixa.forma || null,
     }).eq('id', id).select().single()
   },
 
   async estornar(id) {
     return supabase.from('contas_pagar').update({
-      status: 'pendente', data_pagamento: null, valor_pago: 0, juros: 0, multa: 0, desconto: 0, conta_bancaria_id: null,
+      status: 'pendente', data_pagamento: null, valor_pago: 0, juros: 0, multa: 0, desconto: 0, conta_bancaria_id: null, forma: null,
     }).eq('id', id).select().single()
   },
 
@@ -366,12 +367,13 @@ export const ContasReceber = {
       multa:             Number(baixa.multa || 0),
       desconto:          Number(baixa.desconto || 0),
       conta_bancaria_id: baixa.conta_bancaria_id || null,
+      forma: baixa.forma || null,
     }).eq('id', id).select().single()
   },
 
   async estornar(id) {
     return supabase.from('contas_receber').update({
-      status: 'pendente', data_recebimento: null, valor_recebido: 0, juros: 0, multa: 0, desconto: 0, conta_bancaria_id: null,
+      status: 'pendente', data_recebimento: null, valor_recebido: 0, juros: 0, multa: 0, desconto: 0, conta_bancaria_id: null, forma: null,
     }).eq('id', id).select().single()
   },
 

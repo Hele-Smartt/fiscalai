@@ -985,6 +985,14 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   const [dataInicio, setDataInicio] = useState(primeiroDia);
   const [dataFim,    setDataFim]    = useState(ultimoDia);
   const [filtroStatus, setFiltroStatus] = useState('');
+  const [filtroFornecedor, setFiltroFornecedor] = useState('');
+  const [filtroClienteCR,  setFiltroClienteCR]  = useState('');
+  const [filtroForma,      setFiltroForma]      = useState('');
+  const [filtroDataTipo,   setFiltroDataTipo]   = useState('vencimento'); // 'vencimento' | 'liquidacao'
+  const [filtroDataIni,    setFiltroDataIni]    = useState('');
+  const [filtroDataFim,    setFiltroDataFim]    = useState('');
+  const [fornecedoresList, setFornecedoresList] = useState([]);
+  const [clientesList,     setClientesList]     = useState([]);
   const [filtroTipo,   setFiltroTipo]   = useState('');
   const [busca,        setBusca]        = useState('');
 
@@ -1022,7 +1030,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
   // Carrega sempre que mudar período, tab ou clienteId
   useEffect(() => {
     if (empresaId && clienteId) carregar();
-  }, [empresaId, clienteId, tab, dataInicio, dataFim, filtroStatus]);
+  }, [empresaId, clienteId, tab, dataInicio, dataFim]);
 
   async function carregar() {
     setLoading(true);
@@ -1057,24 +1065,28 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
         setFluxo({ entradas, saidas, saldo: entradas - saidas });
       }
       if (tab === 2) {
-        const [res, tot, bcs] = await Promise.all([
-          ContasPagar.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
+        const [res, tot, bcs, forn] = await Promise.all([
+          ContasPagar.listar(empresaId, {}, clienteId),
           ContasPagar.totais(empresaId, clienteId),
           ContasBancarias.listar(empresaId, clienteId),
+          Fornecedores.listar(empresaId, clienteId),
         ]);
         setContasPagar(res.data || []);
         setTotaisPagar(tot);
         setBancos(bcs.data || []);
+        setFornecedoresList(forn.data || []);
       }
       if (tab === 3) {
-        const [res, tot, bcs] = await Promise.all([
-          ContasReceber.listar(empresaId, filtroStatus ? { status: filtroStatus } : {}, clienteId),
+        const [res, tot, bcs, cli] = await Promise.all([
+          ContasReceber.listar(empresaId, {}, clienteId),
           ContasReceber.totais(empresaId, clienteId),
           ContasBancarias.listar(empresaId, clienteId),
+          Clientes.listar(empresaId, clienteId),
         ]);
         setContasReceber(res.data || []);
         setTotaisReceber(tot);
         setBancos(bcs.data || []);
+        setClientesList(cli.data || []);
       }
     } catch(e) { console.error(e); }
     setLoading(false);
@@ -1133,6 +1145,35 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     {v:'boleto', l:'Boleto'},
   ];
   const formaLabel = v => (FORMAS.find(x=>x.v===v)||{}).l || v;
+
+  function filtrarContas(lista, tipo) {
+    const hoje = new Date().toISOString().slice(0,10);
+    const formaLbl = (filtroForma ? formaLabel(filtroForma) : '').toLowerCase();
+    return (lista||[]).filter(c => {
+      const aberto = c.status==='pendente' || c.status==='parcial';
+      const atrasado = aberto && (c.vencimento||'9999') < hoje;
+      if (filtroStatus) {
+        if (filtroStatus==='vencido') { if(!atrasado) return false; }
+        else if (c.status!==filtroStatus) return false;
+      }
+      if (tipo==='pagar'   && filtroFornecedor && c.fornecedor_id!==filtroFornecedor) return false;
+      if (tipo==='receber' && filtroClienteCR  && c.cliente_id!==filtroClienteCR)   return false;
+      if (filtroForma && !((c.forma||'').toLowerCase().includes(formaLbl))) return false;
+      if (filtroDataIni || filtroDataFim) {
+        const campo = filtroDataTipo==='liquidacao'
+          ? (tipo==='pagar' ? c.data_pagamento : c.data_recebimento)
+          : c.vencimento;
+        if (!campo) return false;
+        if (filtroDataIni && campo < filtroDataIni) return false;
+        if (filtroDataFim && campo > filtroDataFim) return false;
+      }
+      return true;
+    });
+  }
+  function limparFiltros() {
+    setFiltroStatus(''); setFiltroFornecedor(''); setFiltroClienteCR(''); setFiltroForma('');
+    setFiltroDataTipo('vencimento'); setFiltroDataIni(''); setFiltroDataFim('');
+  }
 
   function abrirBaixa(tipo, conta) {
     const jaPago = Number(tipo==='pagar' ? conta.valor_pago : conta.valor_recebido) || 0;
@@ -1384,6 +1425,10 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
     </div>
   );
 
+  const contasPagarView   = filtrarContas(contasPagar,   'pagar');
+  const contasReceberView = filtrarContas(contasReceber, 'receber');
+  const filtrosAtivos = !!(filtroStatus||filtroFornecedor||filtroClienteCR||filtroForma||filtroDataIni||filtroDataFim);
+
   return (
     <div className="fade-up">
 
@@ -1433,7 +1478,7 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
       {/* Tabs */}
       <div className="tabs mb-16">
         {tabs.map((t,i)=>(
-          <div key={i} className={`tab ${tab===i?'active':''}`} onClick={()=>{setTab(i);setFiltroStatus('');}}>{t}</div>
+          <div key={i} className={`tab ${tab===i?'active':''}`} onClick={()=>{setTab(i);limparFiltros();}}>{t}</div>
         ))}
       </div>
 
@@ -1780,13 +1825,30 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
           <div className="card">
             <div className="card-header">
               <span className="card-title">Contas a Pagar</span>
-              <div className="flex gap-8">
-                <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
-                  <option value="">Todos</option><option value="pendente">Em Aberto</option>
-                  <option value="parcial">Parcial</option><option value="pago">Pago</option>
-                </select>
-                <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-pagar')}>+ Nova</button>
-              </div>
+              <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-pagar')}>+ Nova</button>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',padding:'0 16px 12px'}}>
+              <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
+                <option value="">Status: todos</option><option value="pendente">Em Aberto</option>
+                <option value="parcial">Parcial</option><option value="vencido">Vencido</option><option value="pago">Pago</option>
+              </select>
+              <select className="inp" style={{width:170,fontSize:12,padding:'5px 8px'}} value={filtroFornecedor} onChange={e=>setFiltroFornecedor(e.target.value)}>
+                <option value="">Fornecedor: todos</option>
+                {fornecedoresList.map(f=><option key={f.id} value={f.id}>{f.nome}</option>)}
+              </select>
+              <select className="inp" style={{width:150,fontSize:12,padding:'5px 8px'}} value={filtroForma} onChange={e=>setFiltroForma(e.target.value)}>
+                <option value="">Forma: todas</option>
+                {FORMAS.map(fo=><option key={fo.v} value={fo.v}>{fo.l}</option>)}
+              </select>
+              <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroDataTipo} onChange={e=>setFiltroDataTipo(e.target.value)}>
+                <option value="vencimento">por Vencimento</option>
+                <option value="liquidacao">por Pagamento</option>
+              </select>
+              <input type="date" className="inp" style={{width:140,fontSize:12,padding:'5px 8px'}} value={filtroDataIni} onChange={e=>setFiltroDataIni(e.target.value)} />
+              <span style={{color:'var(--text3)',fontSize:12}}>até</span>
+              <input type="date" className="inp" style={{width:140,fontSize:12,padding:'5px 8px'}} value={filtroDataFim} onChange={e=>setFiltroDataFim(e.target.value)} />
+              {filtrosAtivos && <button className="btn btn-ghost" style={{fontSize:11,padding:'5px 10px'}} onClick={limparFiltros}>✕ Limpar</button>}
+              <span style={{marginLeft:'auto',fontSize:11,color:'var(--text3)'}}>{contasPagarView.length} de {contasPagar.length}</span>
             </div>
             {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text3)'}}>⏳ Carregando...</div> :
              contasPagar.length===0 ? (
@@ -1795,12 +1857,14 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                 <div>Nenhuma conta a pagar cadastrada.</div>
                 <button className="btn btn-primary" style={{marginTop:12}} onClick={()=>openForm?.('conta-pagar')}>+ Cadastrar</button>
               </div>
+            ) : contasPagarView.length===0 ? (
+              <div className="empty"><div style={{fontSize:28,marginBottom:6}}>🔍</div><div>Nenhuma conta a pagar com esses filtros.</div></div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Descrição</th><th>Fornecedor</th><th>Vencimento</th><th>Status</th><th>Valor</th><th></th></tr></thead>
                   <tbody>
-                    {contasPagar.map(c=>(
+                    {contasPagarView.map(c=>(
                       <tr key={c.id}>
                         <td className="primary">{c.descricao}</td>
                         <td style={{fontSize:12,color:'var(--text2)'}}>{c.fornecedores?.nome||'—'}</td>
@@ -1842,13 +1906,30 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
           <div className="card">
             <div className="card-header">
               <span className="card-title">Contas a Receber</span>
-              <div className="flex gap-8">
-                <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
-                  <option value="">Todos</option><option value="pendente">Em Aberto</option>
-                  <option value="parcial">Parcial</option><option value="recebido">Recebido</option>
-                </select>
-                <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-receber')}>+ Nova</button>
-              </div>
+              <button className="btn btn-primary" style={{fontSize:12}} onClick={()=>openForm?.('conta-receber')}>+ Nova</button>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',padding:'0 16px 12px'}}>
+              <select className="inp" style={{width:130,fontSize:12,padding:'5px 8px'}} value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}>
+                <option value="">Status: todos</option><option value="pendente">Em Aberto</option>
+                <option value="parcial">Parcial</option><option value="vencido">Em atraso</option><option value="recebido">Recebido</option>
+              </select>
+              <select className="inp" style={{width:170,fontSize:12,padding:'5px 8px'}} value={filtroClienteCR} onChange={e=>setFiltroClienteCR(e.target.value)}>
+                <option value="">Cliente: todos</option>
+                {clientesList.map(cl=><option key={cl.id} value={cl.id}>{cl.nome}</option>)}
+              </select>
+              <select className="inp" style={{width:150,fontSize:12,padding:'5px 8px'}} value={filtroForma} onChange={e=>setFiltroForma(e.target.value)}>
+                <option value="">Forma: todas</option>
+                {FORMAS.map(fo=><option key={fo.v} value={fo.v}>{fo.l}</option>)}
+              </select>
+              <select className="inp" style={{width:135,fontSize:12,padding:'5px 8px'}} value={filtroDataTipo} onChange={e=>setFiltroDataTipo(e.target.value)}>
+                <option value="vencimento">por Vencimento</option>
+                <option value="liquidacao">por Recebimento</option>
+              </select>
+              <input type="date" className="inp" style={{width:140,fontSize:12,padding:'5px 8px'}} value={filtroDataIni} onChange={e=>setFiltroDataIni(e.target.value)} />
+              <span style={{color:'var(--text3)',fontSize:12}}>até</span>
+              <input type="date" className="inp" style={{width:140,fontSize:12,padding:'5px 8px'}} value={filtroDataFim} onChange={e=>setFiltroDataFim(e.target.value)} />
+              {filtrosAtivos && <button className="btn btn-ghost" style={{fontSize:11,padding:'5px 10px'}} onClick={limparFiltros}>✕ Limpar</button>}
+              <span style={{marginLeft:'auto',fontSize:11,color:'var(--text3)'}}>{contasReceberView.length} de {contasReceber.length}</span>
             </div>
             {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text3)'}}>⏳ Carregando...</div> :
              contasReceber.length===0 ? (
@@ -1857,12 +1938,14 @@ function Financeiro({ empresaId, clienteId, openForm, recarregar }) {
                 <div>Nenhuma conta a receber cadastrada.</div>
                 <button className="btn btn-primary" style={{marginTop:12}} onClick={()=>openForm?.('conta-receber')}>+ Cadastrar</button>
               </div>
+            ) : contasReceberView.length===0 ? (
+              <div className="empty"><div style={{fontSize:28,marginBottom:6}}>🔍</div><div>Nenhuma conta a receber com esses filtros.</div></div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Descrição</th><th>Cliente</th><th>Vencimento</th><th>Status</th><th>Valor</th><th></th></tr></thead>
                   <tbody>
-                    {contasReceber.map(c=>(
+                    {contasReceberView.map(c=>(
                       <tr key={c.id}>
                         <td className="primary">{c.descricao}</td>
                         <td style={{fontSize:12,color:'var(--text2)'}}>{c.clientes?.nome||'—'}</td>

@@ -22,6 +22,8 @@ export default function NovaContaReceber({ onBack, onSaved, editData = null }) {
     cliente_id:         editData?.cliente_id         || '',
     categoria_id:       editData?.categoria_id       || '',
     nota_fiscal_numero: editData?.nota_fiscal_numero || '',
+    recorrente:         editData?.recorrente         || false,
+    parcelas:           editData?.parcelas           || 1,
     observacao:         editData?.observacao         || '',
   })
 
@@ -33,6 +35,15 @@ export default function NovaContaReceber({ onBack, onSaved, editData = null }) {
     Clientes.listar(empresa.id).then(({ data }) => setClientes(data || []))
   }, [empresa?.id])
 
+  function addMeses(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number)
+    const base = new Date(y, m - 1 + n, 1)
+    const ano = base.getFullYear(), mes = base.getMonth()
+    const ultimoDia = new Date(ano, mes + 1, 0).getDate()
+    const dia = Math.min(d, ultimoDia)
+    return `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.descricao || !form.valor || !form.vencimento) {
@@ -40,23 +51,67 @@ export default function NovaContaReceber({ onBack, onSaved, editData = null }) {
     }
     setLoading(true); setErro('')
 
-    const dados = {
-      ...form,
+    const base = {
       empresa_id:   empresa.id,
       cliente_helevare_id: clienteId || null,
+      descricao:    form.descricao,
       valor:        parseFloat(form.valor),
+      vencimento:   form.vencimento,
+      status:       form.status,
       cliente_id:   form.cliente_id   || null,
       categoria_id: form.categoria_id || null,
+      nota_fiscal_numero: form.nota_fiscal_numero || null,
+      observacao:   form.observacao || null,
+      recorrente:   false,
+      parcelas:     1,
     }
 
-    const { error } = editData
-      ? await ContasReceber.atualizar(editData.id, dados)
-      : await ContasReceber.criar(dados)
+    // Edição: atualiza só o registro (não regenera)
+    if (editData) {
+      const { error } = await ContasReceber.atualizar(editData.id, { ...base, recorrente: form.recorrente, parcelas: parseInt(form.parcelas) || 1 })
+      setLoading(false)
+      if (error) { setErro(error.message); return }
+      setSucesso(true); setTimeout(() => { onSaved?.(); onBack?.() }, 1200); return
+    }
+
+    const recorrente = form.recorrente === true || form.recorrente === 'true'
+    const nParc = parseInt(form.parcelas) || 1
+    const meses = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']
+    let linhas = []
+
+    if (recorrente) {
+      // contrato/mensalidade: um lançamento por mês, do vencimento até dezembro do exercício
+      const mesV = Number(form.vencimento.slice(5, 7))
+      const qtd = 12 - mesV + 1
+      for (let i = 0; i < qtd; i++) {
+        const venc = addMeses(form.vencimento, i)
+        const lbl = `${meses[Number(venc.slice(5, 7)) - 1]}/${venc.slice(0, 4)}`
+        linhas.push({ ...base, status: 'pendente', recorrente: true, parcelas: 1, parcela_atual: null,
+          vencimento: venc, descricao: `${form.descricao} (${lbl})` })
+      }
+    } else if (nParc > 1) {
+      // parcelamento: valor total dividido (última parcela absorve o arredondamento)
+      const total = parseFloat(form.valor)
+      const parc = Math.floor((total / nParc) * 100) / 100
+      for (let i = 0; i < nParc; i++) {
+        const ultima = i === nParc - 1
+        const valorParc = ultima ? Math.round((total - parc * (nParc - 1)) * 100) / 100 : parc
+        linhas.push({ ...base, status: 'pendente', recorrente: false, parcelas: nParc, parcela_atual: i + 1,
+          valor: valorParc, vencimento: addMeses(form.vencimento, i),
+          descricao: `${form.descricao} (${i + 1}/${nParc})` })
+      }
+    } else {
+      linhas = [base]
+    }
+
+    const { error } = linhas.length === 1
+      ? await ContasReceber.criar(linhas[0])
+      : await ContasReceber.criarVarios(linhas)
 
     setLoading(false)
     if (error) { setErro(error.message); return }
     setSucesso(true)
-    setTimeout(() => { onSaved?.(); onBack?.() }, 1500)
+    setTimeout(() => { onSaved?.(); onBack?.() }, 1200)
   }
 
   return (
@@ -122,6 +177,35 @@ export default function NovaContaReceber({ onBack, onSaved, editData = null }) {
                 <Input placeholder="Observações adicionais..." value={form.observacao} onChange={e => set('observacao', e.target.value)} />
               </Field>
             </div>
+          </div>
+
+          <div className="form-card">
+            <div className="form-section-title">Parcelamento e Recorrência</div>
+            <div className="form-grid form-grid-2">
+              <Field label="Recorrente" hint="Ex.: contrato/mensalidade">
+                <Select value={form.recorrente} onChange={e => set('recorrente', e.target.value === 'true')}>
+                  <option value="false">Não — recebimento único</option>
+                  <option value="true">Sim — recorrente mensal (contrato)</option>
+                </Select>
+              </Field>
+              <Field label="Número de Parcelas" hint="1 = à vista">
+                <Input type="number" min="1" max="360" value={form.parcelas} onChange={e => set('parcelas', e.target.value)} disabled={form.recorrente === true || form.recorrente === 'true'} />
+              </Field>
+            </div>
+            {(() => {
+              const recorrente = form.recorrente === true || form.recorrente === 'true'
+              const nParc = parseInt(form.parcelas) || 1
+              let msg = null
+              if (recorrente && form.vencimento) {
+                const qtd = 12 - Number(form.vencimento.slice(5, 7)) + 1
+                msg = `🔁 Contrato: serão gerados ${qtd} recebimentos mensais (do mês do vencimento até dez/${form.vencimento.slice(0, 4)}), com o valor cheio em cada mês.`
+              } else if (!recorrente && nParc > 1) {
+                msg = `📋 Serão geradas ${nParc} parcelas mensais a partir do vencimento. O valor informado é o TOTAL e será dividido entre as parcelas.`
+              }
+              return msg ? (
+                <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(0,144,255,0.08)', border: '1px solid rgba(0,144,255,0.25)', fontSize: 12.5, color: 'var(--text2)' }}>{msg}</div>
+              ) : null
+            })()}
           </div>
 
           <div className="form-actions">
